@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { STRATEGIC_PROFILE_VERSION } from "@/lib/game/prompts"
 import { gameReducer, humanFinished, initialGameState, type GameAction, type GameState } from "@/lib/game/state"
 import type { Message } from "@/types/game"
 
@@ -9,11 +10,12 @@ const run = (state: GameState, ...actions: GameAction[]) => actions.reduce(gameR
 const you = (content = "hi"): Message => ({ sender: "YOU", content, timestamp: 1 })
 const ai = (content = "hey"): Message => ({ sender: "AI", content, timestamp: 1 })
 const humanMsg = (roundId = "r1"): GameAction => ({ type: "HUMAN_MESSAGE", roundId, message: you() })
-const aiTurn = (message: Message | null, lockIn: "SHARE" | "KEEP" | null = null): GameAction => ({
+const aiTurn = (message: Message | null, lockIn: "SHARE" | "KEEP" | null = null, lockInReason: string | null = null): GameAction => ({
   type: "AI_TURN",
   roundId: "r1",
   message,
   lockIn,
+  lockInReason,
 })
 
 describe("gameReducer", () => {
@@ -69,6 +71,19 @@ describe("gameReducer", () => {
     )
     expect(state.phase).toBe("result")
     expect(state.lastResult).toMatchObject({ yourDecision: "KEEP", aiDecision: "SHARE", yourPoints: 5, aiPoints: 0 })
+  })
+
+  it("keeps the AI's first lock-in reason and puts it on the result", () => {
+    const state = run(
+      start(),
+      aiTurn(null, "KEEP", "They dodged every question."),
+      aiTurn(null, "SHARE", "changed my mind"),
+      { type: "HUMAN_LOCK_IN", roundId: "r1", choice: "SHARE" },
+      { type: "REVEAL", roundId: "r1", date: "d" },
+    )
+    expect(state.lastResult?.aiReasoning).toBe("They dodged every question.")
+    expect(state.history[0].aiReasoning).toBe("They dodged every question.")
+    expect(state.lastResult?.profileVersion).toBe(STRATEGIC_PROFILE_VERSION)
   })
 
   it("doesn't reveal until both have locked in", () => {

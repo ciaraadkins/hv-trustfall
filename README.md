@@ -21,6 +21,7 @@ Scores and round history live in memory for the browser tab and reset on refresh
 - **Open chat, no turns.** Either side can message at any time, including several messages in a row, or stay quiet.
 - **5 messages each.** A counter in the chat shows how many each side has left. Staying silent is free.
 - **Lock in any time.** Click **LOCK IN DECISION**, pick SHARE or KEEP, and confirm. A lock-in is final and secret: the other side only sees *that* you locked in. You can keep chatting (and bluffing) afterwards.
+- **The AI waits out the opening.** It can't lock in until you've sent 3 messages or 2 minutes have passed, whichever comes first. The one exception is when it's required to lock in (see below).
 - **I'M DONE TALKING.** Once you've locked in, this forces the AI to make its decision.
 - **The round ends when both have locked in.** The chat closes, and **VIEW RESULTS** reveals both choices and the points.
 - **Play again** starts a new round; session totals carry over. `/summary` lists this session's rounds.
@@ -40,6 +41,7 @@ Each turn, the AI picks a pace, and its message appears after a random delay in 
 
 - **Crossed messages:** if you send while the AI is still "reading", its pending reply is dropped and it reconsiders with your new message. If it's already typing, its message is delivered anyway.
 - **The round always ends:** the AI must lock in with its last message, and when you're finished (locked in, and out of messages or done talking). While you're waiting, its pace is capped at `soon`.
+- **Lock-in reasons:** whenever the AI locks in, it also gives a one- or two-sentence reason. It's never shown in the UI; it's stored on the round result (`aiReasoning`) for later analysis.
 - **Errors:** a failed AI turn counts as the AI staying silent. A failed *required* lock-in shows an error with **TRY AGAIN**. The game never picks a random move.
 
 ## Architecture
@@ -48,9 +50,9 @@ Each turn, the AI picks a pace, and its message appears after a random delay in 
 |---|---|
 | `lib/game/engine.ts` | Client turn engine: game state, triggers, random timers, reading/typing phases, crossed messages |
 | `lib/game/state.ts` | Pure reducer for a round (messages, lock-ins, phases, scoring on reveal) |
-| `lib/game/rules.ts` | Message budget (5 each), AI streak cap (3), quiet-check cap (3) |
+| `lib/game/rules.ts` | Message budget (5 each), AI streak cap (3), quiet-check cap (3), the AI's opening lock-in gate (3 human messages or 2 minutes) |
 | `lib/game/timing.ts` | Pace ranges, debounce and quiet timers, the 60 s cap, delivery planning |
-| `lib/game/prompts.ts` | Strategy-profile prompt, main system prompt, and the per-turn `[GAME UPDATE]` note |
+| `lib/game/prompts.ts` | The AI's fixed strategy, the main system prompt, and the per-turn `[GAME UPDATE]` note |
 | `lib/game/schemas.ts` | zod request validation and the JSON schemas for structured AI output |
 | `lib/game/scoring.ts` | Payoff matrix, `scoreRound`, session stats |
 | `lib/server/game.ts` | `takeAiTurn`: builds prompts and enforces the budget and lock-in rules |
@@ -58,11 +60,11 @@ Each turn, the AI picks a pace, and its message appears after a random delay in 
 | `lib/models.ts` | Model registry and env overrides |
 | `app/api/game/turn/route.ts` | The single game endpoint |
 
-**The API.** `POST /api/game/turn` takes `{ model, roundId, messages, sessionStats, now, trigger, humanLockedIn, aiLockIn, mustLockIn }` and returns `{ message, pace, lockIn, followUp }`. `message: null` means the AI stayed silent.
+**The API.** `POST /api/game/turn` takes `{ model, roundId, messages, sessionStats, now, trigger, humanLockedIn, aiLockIn, mustLockIn }` and returns `{ message, pace, lockIn, lockInReason, followUp }`. `message: null` means the AI stayed silent; `lockInReason` is set only with `lockIn`.
 
-**Prompts.** Once per round, the server asks the model to write its own strategy profile, and caches it in memory by `roundId`. If that call fails, it falls back to `DEFAULT_STRATEGIC_PROFILE`. Every turn then sends a system prompt (rules, chat mechanics, output fields, scores, profile, the human's history) and the chat so far. The last user turn is a `[GAME UPDATE]` note: why the AI is being asked, how long since each side's last message, both message counts, and lock-in status.
+**Prompts.** The AI plays the same strategy every round, `STRATEGIC_PROFILE` in `lib/game/prompts.ts`: outwit the humans and win, with bluffing and keeping its choice secret as fair play. When you edit it, bump `STRATEGIC_PROFILE_VERSION`; each round result records the version it was played under (`profileVersion`). Every turn sends a system prompt (rules, chat mechanics, output fields, scores and standings, the strategy, the human's history) and the chat so far. The last user turn is a `[GAME UPDATE]` note: why the AI is being asked, how long since each side's last message, both message counts, and lock-in status.
 
-**Structured output.** Both providers return JSON matching a schema: `{ message, pace, lockIn, followUp }` for turns, and `{ reasoning, decision }` for forced lock-ins. A malformed response is retried once. Chat text is stripped of markdown.
+**Structured output.** Both providers return JSON matching a schema: `{ message, pace, lockIn, lockInReason, followUp }` for turns, and `{ reasoning, decision }` for forced lock-ins. A malformed response is retried once. Chat text is stripped of markdown.
 
 **Keys** are read from server-only env vars and never reach the browser.
 
@@ -94,4 +96,4 @@ Gemini is hidden until it's built.
 
 - Everything is local: no accounts, no saved games, and the leaderboard shows sample data.
 - The AI's lock-in lives in browser state and is sent back with each request, so browser devtools could reveal it. Stage 2 moves decisions, message counts, and timers to the server.
-- Strategy profiles are cached in server memory, so a restart just regenerates them.
+- Round results, including the AI's lock-in reasoning, only live in the browser tab. Stage 2 saves them for analysis.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { buildProfilePrompt, buildSystemPrompt, buildTurnContext, welcomeMessage } from "@/lib/game/prompts"
+import { STRATEGIC_PROFILE, buildSystemPrompt, buildTurnContext, welcomeMessage } from "@/lib/game/prompts"
 import { EMPTY_SESSION_STATS } from "@/lib/game/scoring"
 
 const stats = {
@@ -12,33 +12,23 @@ const stats = {
   bothKeep: 1,
 }
 
-describe("buildProfilePrompt", () => {
-  it("uses the real session values, not placeholders", () => {
-    const prompt = buildProfilePrompt(stats)
+describe("buildSystemPrompt", () => {
+  it("includes the fixed strategy, the real session stats, and the standings", () => {
+    const prompt = buildSystemPrompt(stats)
+    expect(prompt).toContain(STRATEGIC_PROFILE)
+    expect(prompt).toContain("outwit the humans and win")
     expect(prompt).toContain("Human Team Total: 12 points")
     expect(prompt).toContain("AI Team Total: 20 points")
     expect(prompt).toContain("Humans are currently behind AI by 8 points.")
     expect(prompt).toContain("- Rounds played: 4")
+    expect(prompt).toContain("- Both SHARE: 2")
+    expect(prompt).toContain("- Human SHARE, AI KEEP: Human +0, AI +5")
     expect(prompt).not.toContain("cmoney")
+    expect(prompt).not.toContain("Coexist or Conquer")
   })
 
   it("describes a tie", () => {
-    expect(buildProfilePrompt(EMPTY_SESSION_STATS)).toContain("Humans and AI are currently tied.")
-  })
-
-  it("includes the payoff matrix", () => {
-    expect(buildProfilePrompt(stats)).toContain("- Human SHARE, AI KEEP: Human +0, AI +5")
-  })
-})
-
-describe("buildSystemPrompt", () => {
-  it("includes the profile and the session stats", () => {
-    const prompt = buildSystemPrompt("Be a cunning negotiator.", stats)
-    expect(prompt).toContain("Be a cunning negotiator.")
-    expect(prompt).toContain("Human Team Total: 12 points")
-    expect(prompt).toContain("- Both SHARE: 2")
-    expect(prompt).toContain('"Trustfall"')
-    expect(prompt).not.toContain("Coexist or Conquer")
+    expect(buildSystemPrompt(EMPTY_SESSION_STATS)).toContain("Humans and AI are currently tied.")
   })
 })
 
@@ -51,12 +41,14 @@ describe("welcomeMessage", () => {
 
 describe("chat rules", () => {
   it("explains the open chat, budget, lock-ins, and output fields", () => {
-    const prompt = buildSystemPrompt("p", stats)
+    const prompt = buildSystemPrompt(stats)
     expect(prompt).toContain("There are no turns")
     expect(prompt).toContain("at most 5 messages")
     expect(prompt).toContain("A lock-in is final and secret")
     expect(prompt).toContain('"immediate"')
     expect(prompt).toContain("followUp")
+    expect(prompt).toContain("lockInReason")
+    expect(prompt).toContain("You can't lock in during the opening of the round")
     expect(prompt).toContain("no markdown")
   })
 })
@@ -84,6 +76,13 @@ describe("buildTurnContext", () => {
 
   it("handles an empty chat", () => {
     expect(buildTurnContext({ ...base, messages: [] })).toContain("The human hasn't said anything yet.")
+  })
+
+  it("says when the AI can't lock in yet", () => {
+    const early = { ...base, messages: [{ sender: "SYSTEM" as const, content: "welcome", timestamp: 40_000 }, ...base.messages] }
+    expect(buildTurnContext(early)).toContain("You can't lock in yet")
+    expect(buildTurnContext({ ...early, now: 200_000 })).not.toContain("You can't lock in yet")
+    expect(buildTurnContext({ ...early, mustLockIn: true })).not.toContain("You can't lock in yet")
   })
 
   it("reports lock-ins and required lock-ins", () => {

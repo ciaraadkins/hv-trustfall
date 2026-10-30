@@ -48,6 +48,8 @@ export type TurnResponse = {
   message: string | null
   pace: (typeof PACES)[number]
   lockIn: z.infer<typeof choice> | null
+  /** The AI's private reason for locking in; never shown to the human. Set only with `lockIn`. */
+  lockInReason: string | null
   followUp: boolean
 }
 
@@ -73,6 +75,7 @@ const turnOutputSchema = z.object({
   message: z.string(),
   pace: z.enum(PACES),
   lockIn: z.enum(["SHARE", "KEEP", "NONE"]),
+  lockInReason: z.string(),
   followUp: z.boolean(),
 })
 
@@ -85,9 +88,13 @@ export const TURN_JSON_SCHEMA = {
     message: { type: "string", description: 'The chat message to send, or "" to stay silent.' },
     pace: { type: "string", enum: [...PACES], description: "How soon to send it." },
     lockIn: { type: "string", enum: ["SHARE", "KEEP", "NONE"], description: "Lock in now, or NONE to wait." },
+    lockInReason: {
+      type: "string",
+      description: 'If you lock in now, one or two sentences on why. Never shown to the human. Otherwise "".',
+    },
     followUp: { type: "boolean", description: "Whether you want to send another message right after this one." },
   },
-  required: ["message", "pace", "lockIn", "followUp"],
+  required: ["message", "pace", "lockIn", "lockInReason", "followUp"],
   additionalProperties: false,
 } as const
 

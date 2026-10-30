@@ -22,6 +22,7 @@ const reply = (message: string | null, extra: Partial<TurnResponse> = {}): TurnR
   message,
   pace: "immediate",
   lockIn: null,
+  lockInReason: null,
   followUp: false,
   ...extra,
 })

@@ -1,6 +1,6 @@
 import { DEFAULT_MODEL } from "@/lib/models"
 import type { AIModel, Choice, Message, RoundResult } from "@/types/game"
-import { welcomeMessage } from "./prompts"
+import { STRATEGIC_PROFILE_VERSION, welcomeMessage } from "./prompts"
 import { messagesLeft } from "./rules"
 import { scoreRound } from "./scoring"
 
@@ -21,6 +21,8 @@ export type GameState = {
   aiTyping: boolean
   /** Secret until the reveal; the UI only shows whether it's set. */
   aiLockIn: Choice | null
+  /** Why the AI locked in, as it told the server. Never shown in the UI. */
+  aiLockInReason: string | null
   humanLockIn: Choice | null
   /** The human clicked I'M DONE TALKING. */
   humanDone: boolean
@@ -33,7 +35,7 @@ export type GameAction =
   | { type: "START_ROUND"; model: AIModel; roundId: string; now: number }
   | { type: "HUMAN_MESSAGE"; roundId: string; message: Message }
   | { type: "AI_TYPING"; roundId: string; typing: boolean }
-  | { type: "AI_TURN"; roundId: string; message: Message | null; lockIn: Choice | null }
+  | { type: "AI_TURN"; roundId: string; message: Message | null; lockIn: Choice | null; lockInReason: string | null }
   | { type: "HUMAN_LOCK_IN"; roundId: string; choice: Choice }
   | { type: "HUMAN_DONE"; roundId: string }
   | { type: "LOCK_IN_FAILED"; roundId: string; error: string }
@@ -47,6 +49,7 @@ export const initialGameState: GameState = {
   messages: [],
   aiTyping: false,
   aiLockIn: null,
+  aiLockInReason: null,
   humanLockIn: null,
   humanDone: false,
   lastResult: null,
@@ -98,6 +101,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         aiTyping: false,
         messages: canSend ? [...state.messages, action.message!] : state.messages,
         aiLockIn: state.aiLockIn ?? action.lockIn,
+        aiLockInReason: state.aiLockIn ? state.aiLockInReason : action.lockIn ? action.lockInReason : null,
       })
     }
 
@@ -120,6 +124,8 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         yourDecision: state.humanLockIn,
         aiDecision: state.aiLockIn,
         ...scoreRound(state.humanLockIn, state.aiLockIn),
+        aiReasoning: state.aiLockInReason,
+        profileVersion: STRATEGIC_PROFILE_VERSION,
         date: action.date,
       }
       return { ...state, phase: "result", lastResult: result, history: [...state.history, result] }

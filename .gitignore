@@ -28,7 +28,7 @@ yarn-error.log*
 next-env.d.ts
 
 # local planning docs
-UPDATE_PLAN.md
+/plans/
 
 # OS / editor leftovers
 .DS_Store

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { MAX_RESPONSE_MS, PACE_RANGES_MS, capPace, jitterPace, planDelivery, randomBetween } from "@/lib/game/timing"
-import { aiStreak, lastMessageAt, messagesLeft } from "@/lib/game/rules"
+import { aiMayLockIn, aiStreak, lastMessageAt, messagesLeft } from "@/lib/game/rules"
 
 const fixed = (...values: number[]) => {
   let i = 0
@@ -65,6 +65,19 @@ describe("rules", () => {
   it("counts the AI's current streak", () => {
     expect(aiStreak(messages)).toBe(2)
     expect(aiStreak([...messages, { sender: "YOU" as const, timestamp: 4 }])).toBe(0)
+  })
+
+  it("opens the AI's lock-in after 3 human messages or 2 minutes, whichever comes first", () => {
+    const start = { sender: "SYSTEM" as const, timestamp: 0 }
+    const human = (t: number) => ({ sender: "YOU" as const, timestamp: t })
+    const aiMsg = (t: number) => ({ sender: "AI" as const, timestamp: t })
+
+    expect(aiMayLockIn([start], 119_999)).toBe(false)
+    expect(aiMayLockIn([start], 120_000)).toBe(true)
+    expect(aiMayLockIn([start, human(1), human(2)], 10_000)).toBe(false)
+    expect(aiMayLockIn([start, human(1), human(2), human(3)], 10_000)).toBe(true)
+    // The AI's own messages don't count toward the threshold.
+    expect(aiMayLockIn([start, human(1), aiMsg(2), aiMsg(3), aiMsg(4)], 10_000)).toBe(false)
   })
 
   it("finds each side's last message time", () => {

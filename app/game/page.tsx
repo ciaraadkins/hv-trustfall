@@ -125,6 +125,12 @@ export default function GamePage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, aiTyping])
 
+  // This page stays mounted across rounds (the result screen renders here too), so reset per round.
+  useEffect(() => {
+    setDialogOpen(false)
+    setInputValue("")
+  }, [state.roundId])
+
   // Once you're only waiting on the AI, show its progress in the pop-up.
   useEffect(() => {
     if (waitingOnAi) setDialogOpen(true)

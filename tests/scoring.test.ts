@@ -27,6 +27,8 @@ describe("computeSessionStats", () => {
     yourDecision,
     aiDecision,
     ...scoreRound(yourDecision, aiDecision),
+    aiReasoning: null,
+    profileVersion: 1,
     date: "2026-01-01T00:00:00.000Z",
   })
 

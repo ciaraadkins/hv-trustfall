@@ -69,16 +69,21 @@ describe("turnRequestSchema", () => {
 
 describe("parseTurn", () => {
   it("parses a valid turn", () => {
-    expect(parseTurn('{"message":"hi","pace":"soon","lockIn":"NONE","followUp":false}')).toEqual({
+    expect(parseTurn('{"message":"hi","pace":"soon","lockIn":"NONE","lockInReason":"","followUp":false}')).toEqual({
       message: "hi",
       pace: "soon",
       lockIn: "NONE",
+      lockInReason: "",
       followUp: false,
     })
   })
 
+  it("requires a lockInReason field", () => {
+    expect(() => parseTurn('{"message":"","pace":"soon","lockIn":"KEEP","followUp":false}')).toThrow()
+  })
+
   it("rejects unknown paces and lock-ins", () => {
-    expect(() => parseTurn('{"message":"","pace":"eventually","lockIn":"NONE","followUp":false}')).toThrow()
-    expect(() => parseTurn('{"message":"","pace":"soon","lockIn":"MAYBE","followUp":false}')).toThrow()
+    expect(() => parseTurn('{"message":"","pace":"eventually","lockIn":"NONE","lockInReason":"","followUp":false}')).toThrow()
+    expect(() => parseTurn('{"message":"","pace":"soon","lockIn":"MAYBE","lockInReason":"","followUp":false}')).toThrow()
   })
 })

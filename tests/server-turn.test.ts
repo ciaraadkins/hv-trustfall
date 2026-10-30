@@ -2,14 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { EMPTY_SESSION_STATS } from "@/lib/game/scoring"
 import type { TurnRequest } from "@/lib/game/schemas"
 
-const { generateStructured, generateText } = vi.hoisted(() => ({
-  generateStructured: vi.fn(),
-  generateText: vi.fn(),
-}))
+const { generateStructured } = vi.hoisted(() => ({ generateStructured: vi.fn() }))
 
 vi.mock("@/lib/server/providers", () => ({
   generateStructured,
-  generateText,
   GameError: class extends Error {},
 }))
 
@@ -19,7 +15,7 @@ let round = 0
 const request = (overrides: Partial<TurnRequest> = {}): TurnRequest => ({
   model: "claude",
   roundId: `round-${++round}`,
-  messages: [{ sender: "YOU", content: "hi", timestamp: 1 }],
+  messages: [{ sender: "SYSTEM", content: "welcome", timestamp: 0 }, { sender: "YOU", content: "hi", timestamp: 1 }],
   sessionStats: EMPTY_SESSION_STATS,
   now: 2,
   trigger: "human_message",
@@ -30,28 +26,65 @@ const request = (overrides: Partial<TurnRequest> = {}): TurnRequest => ({
 })
 
 const aiMessages = (n: number) => Array.from({ length: n }, (_, i) => ({ sender: "AI" as const, content: "x", timestamp: i }))
+const humanMessages = (n: number) => Array.from({ length: n }, (_, i) => ({ sender: "YOU" as const, content: "y", timestamp: i }))
+const turn = (fields: object) => ({ message: "", pace: "soon", lockIn: "NONE", lockInReason: "", followUp: false, ...fields })
 
 /** Answer the turn call with `turn`, and any forced decision with `decision`. */
-function modelReturns(turn: object, decision = "KEEP") {
+function modelReturns(turnOutput: object, decision = "KEEP") {
   generateStructured.mockImplementation((_model, _req, format: { name: string }) =>
-    Promise.resolve(format.name === "turn" ? turn : { reasoning: "r", decision }),
+    Promise.resolve(format.name === "turn" ? turn(turnOutput) : { reasoning: "forced reason", decision }),
   )
 }
 
 describe("takeAiTurn", () => {
   beforeEach(() => {
     generateStructured.mockReset()
-    generateText.mockReset().mockResolvedValue("A cautious profile.")
   })
 
   it("returns the AI's message, pace, and follow-up choice", async () => {
     modelReturns({ message: "**Deal?**", pace: "later", lockIn: "NONE", followUp: true })
-    await expect(takeAiTurn(request())).resolves.toEqual({ message: "Deal?", pace: "later", lockIn: null, followUp: true })
+    await expect(takeAiTurn(request())).resolves.toEqual({
+      message: "Deal?",
+      pace: "later",
+      lockIn: null,
+      lockInReason: null,
+      followUp: true,
+    })
   })
 
   it("treats an empty message as staying silent", async () => {
     modelReturns({ message: "  ", pace: "soon", lockIn: "NONE", followUp: true })
     await expect(takeAiTurn(request())).resolves.toMatchObject({ message: null, followUp: false })
+  })
+
+  it("drops a lock-in during the opening of the round", async () => {
+    modelReturns({ message: "I'm in", pace: "immediate", lockIn: "SHARE", lockInReason: "trusting", followUp: false })
+    await expect(takeAiTurn(request({ now: 30_000 }))).resolves.toMatchObject({
+      message: "I'm in",
+      lockIn: null,
+      lockInReason: null,
+    })
+  })
+
+  it("allows a lock-in after the human's 3rd message, with its reason", async () => {
+    modelReturns({ message: "ok", lockIn: "KEEP", lockInReason: "They keep dodging." })
+    const messages = [{ sender: "SYSTEM" as const, content: "welcome", timestamp: 0 }, ...humanMessages(3)]
+    await expect(takeAiTurn(request({ messages, now: 30_000 }))).resolves.toMatchObject({
+      lockIn: "KEEP",
+      lockInReason: "They keep dodging.",
+    })
+  })
+
+  it("allows a lock-in 2 minutes into the round", async () => {
+    modelReturns({ message: "", lockIn: "SHARE", lockInReason: "Waited long enough." })
+    await expect(takeAiTurn(request({ now: 120_000 }))).resolves.toMatchObject({ lockIn: "SHARE" })
+  })
+
+  it("still allows a required lock-in during the opening", async () => {
+    modelReturns({ message: "", lockIn: "KEEP", lockInReason: "They're done talking." })
+    await expect(
+      takeAiTurn(request({ now: 5_000, trigger: "human_finished", mustLockIn: true })),
+    ).resolves.toMatchObject({ lockIn: "KEEP", lockInReason: "They're done talking." })
   })
 
   it("keeps an earlier lock-in final", async () => {
@@ -62,13 +95,14 @@ describe("takeAiTurn", () => {
   it("forces a lock-in with the AI's last message", async () => {
     modelReturns({ message: "last one", pace: "soon", lockIn: "NONE", followUp: true })
     const result = await takeAiTurn(request({ messages: aiMessages(4) }))
-    expect(result).toMatchObject({ message: "last one", lockIn: "KEEP", followUp: false })
+    expect(result).toMatchObject({ message: "last one", lockIn: "KEEP", lockInReason: "forced reason", followUp: false })
   })
 
   it("forces a lock-in when the human is waiting", async () => {
     modelReturns({ message: "", pace: "later", lockIn: "NONE", followUp: false }, "SHARE")
     await expect(takeAiTurn(request({ trigger: "human_finished", mustLockIn: true }))).resolves.toMatchObject({
       lockIn: "SHARE",
+      lockInReason: "forced reason",
     })
   })
 
@@ -90,17 +124,25 @@ describe("takeAiTurn", () => {
       message: null,
       pace: "immediate",
       lockIn: null,
+      lockInReason: null,
       followUp: false,
     })
     expect(generateStructured).not.toHaveBeenCalled()
   })
 
+  it("makes one model call per turn, using the fixed strategy", async () => {
+    modelReturns({ message: "ok" })
+    await takeAiTurn(request())
+    expect(generateStructured).toHaveBeenCalledTimes(1)
+    expect(generateStructured.mock.calls[0][1].system).toContain("outwit the humans and win")
+  })
+
   it("sends the game update as the final user turn", async () => {
     modelReturns({ message: "ok", pace: "soon", lockIn: "NONE", followUp: false })
-    await takeAiTurn(request({ trigger: "human_quiet", now: 31_000 }))
+    await takeAiTurn(request({ trigger: "human_quiet", now: 32_000 }))
     const turns = generateStructured.mock.calls[0][1].turns
     expect(turns.at(-1).role).toBe("user")
     expect(turns.at(-1).content).toContain("[GAME UPDATE]")
-    expect(turns.at(-1).content).toContain("quiet for 31 seconds")
+    expect(turns.at(-1).content).toContain("quiet for 32 seconds")
   })
 })

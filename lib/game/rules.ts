@@ -30,3 +30,20 @@ export function lastMessageAt(messages: Pick<Message, "sender" | "timestamp">[],
   }
   return null
 }
+
+/** The AI can't lock in until the human has sent this many messages... */
+export const MIN_HUMAN_MESSAGES_BEFORE_AI_LOCK = 3
+
+/** ...or this long after the round starts, whichever comes first. */
+export const MIN_MS_BEFORE_AI_LOCK = 120_000
+
+/**
+ * Whether the opening of the round is over, so the AI may lock in by choice.
+ * The round starts at the welcome message. Required lock-ins ignore this.
+ */
+export function aiMayLockIn(messages: Pick<Message, "sender" | "timestamp">[], now: number): boolean {
+  const humanSent = messages.filter((m) => m.sender === "YOU").length
+  if (humanSent >= MIN_HUMAN_MESSAGES_BEFORE_AI_LOCK) return true
+  const startedAt = messages.find((m) => m.sender === "SYSTEM")?.timestamp ?? messages[0]?.timestamp
+  return startedAt !== undefined && now - startedAt >= MIN_MS_BEFORE_AI_LOCK
+}

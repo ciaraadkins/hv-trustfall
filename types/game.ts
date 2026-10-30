@@ -16,6 +16,10 @@ export type RoundResult = {
   aiDecision: Choice
   yourPoints: number
   aiPoints: number
+  /** The AI's private reason for its lock-in. Not shown in the UI; kept for later analysis. */
+  aiReasoning: string | null
+  /** Which version of the AI's strategy profile this round was played under. */
+  profileVersion: number
   date: string
 }
 

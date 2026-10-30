@@ -208,6 +208,7 @@ export function createGameEngine({ requestTurn, random = Math.random }: EngineDe
       roundId: state.roundId,
       message: response.message ? { sender: "AI", content: response.message, timestamp: Date.now() } : null,
       lockIn: response.lockIn,
+      lockInReason: response.lockInReason,
     })
     if (response.message) quietChecks = 0
 

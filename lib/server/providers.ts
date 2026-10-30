@@ -144,12 +144,6 @@ async function complete(model: AIModel, req: CompletionRequest): Promise<string>
   }
 }
 
-export async function generateText(model: AIModel, req: Omit<CompletionRequest, "format">): Promise<string> {
-  const text = await complete(model, req)
-  if (!text) throw new GameError(`${MODELS[model].displayName} sent an empty reply. Try again.`, 502, true)
-  return text
-}
-
 /** Get structured output, retrying once on a retryable or malformed response. */
 export async function generateStructured<T>(
   model: AIModel,

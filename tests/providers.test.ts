@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import Anthropic from "@anthropic-ai/sdk"
 import { DECISION_JSON_SCHEMA, parseDecision } from "@/lib/game/schemas"
-import { GameError, generateStructured, generateText } from "@/lib/server/providers"
+import { GameError, generateStructured } from "@/lib/server/providers"
 
-const generateDecision = (model: "claude" | "openai", req: Parameters<typeof generateText>[1]) =>
+const generateDecision = (model: "claude" | "openai", req: Parameters<typeof generateStructured>[1]) =>
   generateStructured(model, req, { name: "decision", schema: DECISION_JSON_SCHEMA }, parseDecision)
 
 const { create } = vi.hoisted(() => ({ create: vi.fn() }))
@@ -44,12 +44,13 @@ describe("Claude provider", () => {
 
   it("honors the CLAUDE_MODEL override", async () => {
     process.env.CLAUDE_MODEL = "claude-haiku-4-5"
-    create.mockResolvedValueOnce(text("Hello."))
-    await generateText("claude", request)
+    create.mockResolvedValueOnce(text('{"reasoning":"r","decision":"KEEP"}'))
+    await generateDecision("claude", request)
     const params = create.mock.calls[0][0]
     expect(params.model).toBe("claude-haiku-4-5")
+    // Haiku takes neither the thinking setting nor effort.
     expect(params.thinking).toBeUndefined()
-    expect(params.output_config).toBeUndefined()
+    expect(params.output_config.effort).toBeUndefined()
   })
 
   it("retries a malformed decision once, then succeeds", async () => {
@@ -72,12 +73,12 @@ describe("Claude provider", () => {
 
   it("fails clearly when the key isn't set", async () => {
     delete process.env.ANTHROPIC_API_KEY
-    await expect(generateText("claude", request)).rejects.toThrow("ANTHROPIC_API_KEY is not set")
+    await expect(generateDecision("claude", request)).rejects.toThrow("ANTHROPIC_API_KEY is not set")
     expect(create).not.toHaveBeenCalled()
   })
 
   it("treats a refusal as an error", async () => {
     create.mockResolvedValueOnce({ stop_reason: "refusal", content: [] })
-    await expect(generateText("claude", request)).rejects.toThrow("declined")
+    await expect(generateDecision("claude", request)).rejects.toThrow("declined")
   })
 })
