@@ -46,7 +46,7 @@ export default function LeaderboardPage() {
               Can you outsmart AI in a game of trust and strategy? Make the right decisions, contribute to the global human score, and help us understand the dynamics of human-AI cooperation.
             </p>
             <Link
-              href="/select"
+              href="/game"
               className="inline-flex items-center gap-2 bg-[#33FF33]/20 hover:bg-[#33FF33]/30 border-2 border-[#33FF33] rounded-lg px-8 py-4 font-mono text-[#33FF33] text-xl transition-all duration-200 hover:glow-text"
             >
               <PlayCircle className="w-6 h-6" />
@@ -196,7 +196,7 @@ export default function LeaderboardPage() {
 
           <div className="flex justify-center mt-8">
             <Link
-              href="/select"
+              href="/game"
               className="inline-flex items-center gap-2 bg-[#1e1e1e] border border-[#33FF33]/50 hover:border-[#33FF33] hover:bg-[#1e1e1e]/80 rounded-lg px-6 py-3 font-mono text-[#33FF33] transition-all duration-200 hover:glow-text"
             >
               <PlayCircle className="w-5 h-5" />

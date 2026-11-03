@@ -1,7 +1,15 @@
-import type { AIModel, Choice } from "@/types/game"
+import type { Choice } from "@/types/game"
 import { MAX_AI_STREAK, MAX_QUIET_CHECKS, aiStreak, messagesLeft } from "./rules"
-import type { Trigger, TurnRequest, TurnResponse } from "./schemas"
-import { computeSessionStats } from "./scoring"
+import type { ScoreStats } from "@/types/game"
+import type {
+  FinishRequest,
+  FinishResponse,
+  StartRequest,
+  StartResponse,
+  Trigger,
+  TurnRequest,
+  TurnResponse,
+} from "./schemas"
 import { gameReducer, humanFinished, initialGameState, type GameAction, type GameState } from "./state"
 import { HUMAN_MESSAGE_DEBOUNCE_MS, QUIET_MS, capPace, jitterPace, planDelivery, randomBetween } from "./timing"
 
@@ -20,6 +28,8 @@ type PendingTurn = {
 }
 
 type EngineDeps = {
+  requestStart: (payload: StartRequest) => Promise<StartResponse>
+  requestFinish: (payload: FinishRequest) => Promise<FinishResponse>
   requestTurn: (payload: TurnRequest, signal: AbortSignal) => Promise<TurnResponse>
   random?: () => number
 }
@@ -28,7 +38,7 @@ type EngineDeps = {
  * Runs a round: holds the game state and decides when the AI is asked to act,
  * how long its reply takes to appear, and what happens when messages cross.
  */
-export function createGameEngine({ requestTurn, random = Math.random }: EngineDeps) {
+export function createGameEngine({ requestStart, requestFinish, requestTurn, random = Math.random }: EngineDeps) {
   let state: GameState = initialGameState
   const listeners = new Set<() => void>()
 
@@ -107,7 +117,7 @@ export function createGameEngine({ requestTurn, random = Math.random }: EngineDe
   }
 
   function request(requested: Trigger) {
-    if (!active()) return
+    if (!active() || !state.roundToken) return
     const aiLeft = messagesLeft(state.messages, "AI")
     if (state.aiLockIn && aiLeft === 0) return
 
@@ -143,10 +153,9 @@ export function createGameEngine({ requestTurn, random = Math.random }: EngineDe
 
     requestTurn(
       {
-        model: state.model,
+        roundToken: state.roundToken,
         roundId: state.roundId,
         messages: state.messages,
-        sessionStats: computeSessionStats(state.history),
         now: Date.now(),
         trigger,
         humanLockedIn: state.humanLockIn !== null,
@@ -234,12 +243,19 @@ export function createGameEngine({ requestTurn, random = Math.random }: EngineDe
       return () => listeners.delete(listener)
     },
 
-    startRound(model: AIModel, roundId: string) {
+    /** Ask the server for a hidden opponent, then open the chat. */
+    async startRound(roundId: string) {
       stopAll()
       quietChecks = 0
-      dispatch({ type: "START_ROUND", model, roundId, now: Date.now() })
-      // The AI may open the chat if the human stays quiet.
-      scheduleQuiet()
+      dispatch({ type: "MATCHING", roundId })
+      try {
+        const { roundToken } = await requestStart({ roundId })
+        if (!dispatch({ type: "START_ROUND", roundId, roundToken, now: Date.now() })) return
+        // The AI may open the chat if the human stays quiet.
+        scheduleQuiet()
+      } catch (error) {
+        dispatch({ type: "MATCH_FAILED", roundId, error: (error as Error).message })
+      }
     },
 
     sendMessage(content: string): boolean {
@@ -290,8 +306,27 @@ export function createGameEngine({ requestTurn, random = Math.random }: EngineDe
       request("human_finished")
     },
 
-    reveal() {
-      dispatch({ type: "REVEAL", roundId: state.roundId, date: new Date().toISOString() })
+    /** Log the round on the server, then score it and find out who the opponent was. */
+    async reveal() {
+      const { roundId, roundToken, messages, humanLockIn, aiLockIn, aiLockInReason } = state
+      if (!roundToken || !humanLockIn || !aiLockIn || !dispatch({ type: "REVEAL_STARTED", roundId })) return
+      try {
+        const finished = await requestFinish({
+          roundId,
+          roundToken,
+          messages,
+          humanDecision: humanLockIn,
+          aiDecision: aiLockIn,
+          aiLockInReason,
+        })
+        dispatch({ type: "REVEAL", roundId, ...finished, date: new Date().toISOString() })
+      } catch (error) {
+        dispatch({ type: "REVEAL_FAILED", roundId, error: (error as Error).message })
+      }
+    },
+
+    setStats(stats: ScoreStats) {
+      dispatch({ type: "STATS_LOADED", stats })
     },
 
     dismissError() {

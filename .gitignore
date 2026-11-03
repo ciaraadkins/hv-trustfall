@@ -33,3 +33,9 @@ next-env.d.ts
 # OS / editor leftovers
 .DS_Store
 *.bak
+
+# Local game data: the round log and the AI's notes on the player
+/data/
+
+# Human Versus brand kit (private: includes AWS account details)
+/human-versus-kit/

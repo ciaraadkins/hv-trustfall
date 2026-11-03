@@ -36,9 +36,21 @@ describe("timing", () => {
     expect(long.typingMs).toBe(6000)
   })
 
+  it("counts the pace from the trigger, so a slow API doesn't add to it", () => {
+    const plan = planDelivery({ pace: "soon", messageLength: 10, elapsedMs: 4000 }, () => 0.5)
+    expect(plan.readingMs + plan.typingMs).toBe(6000)
+  })
+
+  it("still shows the typing phase in full when the API took longer than the pace", () => {
+    expect(planDelivery({ pace: "immediate", messageLength: 50, elapsedMs: 5000 }, () => 0.5)).toEqual({
+      readingMs: 0,
+      typingMs: 2000,
+    })
+  })
+
   it("never lands later than a minute after the trigger", () => {
-    const plan = planDelivery({ pace: "later", messageLength: 50, elapsedMs: 30000 }, () => 1)
-    expect(plan.readingMs + plan.typingMs).toBe(MAX_RESPONSE_MS - 30000)
+    const plan = planDelivery({ pace: "later", messageLength: 50, elapsedMs: 58000 }, () => 1)
+    expect(plan.readingMs + plan.typingMs).toBe(MAX_RESPONSE_MS - 58000)
 
     const late = planDelivery({ pace: "later", messageLength: 50, elapsedMs: 70000 }, () => 1)
     expect(late).toEqual({ readingMs: 0, typingMs: 0 })

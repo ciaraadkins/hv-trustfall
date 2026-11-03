@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { computeSessionStats, formatPoints, scoreRound } from "@/lib/game/scoring"
+import { computeStats, formatPoints, scoreRound } from "@/lib/game/scoring"
 import type { RoundResult } from "@/types/game"
 
 describe("scoreRound", () => {
@@ -21,9 +21,10 @@ describe("formatPoints", () => {
   })
 })
 
-describe("computeSessionStats", () => {
+describe("computeStats", () => {
   const round = (yourDecision: "SHARE" | "KEEP", aiDecision: "SHARE" | "KEEP"): RoundResult => ({
     model: "claude",
+    apiModel: "claude-sonnet-5-5",
     yourDecision,
     aiDecision,
     ...scoreRound(yourDecision, aiDecision),
@@ -33,11 +34,11 @@ describe("computeSessionStats", () => {
   })
 
   it("starts empty", () => {
-    expect(computeSessionStats([])).toMatchObject({ humanTotal: 0, aiTotal: 0, gamesPlayed: 0 })
+    expect(computeStats([])).toMatchObject({ humanTotal: 0, aiTotal: 0, gamesPlayed: 0 })
   })
 
   it("totals points and counts outcomes", () => {
-    const stats = computeSessionStats([round("SHARE", "SHARE"), round("SHARE", "KEEP"), round("KEEP", "KEEP")])
+    const stats = computeStats([round("SHARE", "SHARE"), round("SHARE", "KEEP"), round("KEEP", "KEEP")])
     expect(stats).toEqual({
       humanTotal: 4,
       aiTotal: 9,

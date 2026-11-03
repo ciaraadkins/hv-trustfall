@@ -1,14 +1,17 @@
-import type { TurnRequest, TurnResponse } from "./schemas"
+import type { ScoreStats } from "@/types/game"
+import type {
+  FinishRequest,
+  FinishResponse,
+  StartRequest,
+  StartResponse,
+  TurnRequest,
+  TurnResponse,
+} from "./schemas"
 
-export async function requestTurn(payload: TurnRequest, signal?: AbortSignal): Promise<TurnResponse> {
+async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response
   try {
-    response = await fetch("/api/game/turn", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal,
-    })
+    response = await fetch(path, init)
   } catch (error) {
     if ((error as Error).name === "AbortError") throw error
     throw new Error("Network error. Check your connection and try again.")
@@ -18,5 +21,17 @@ export async function requestTurn(payload: TurnRequest, signal?: AbortSignal): P
   if (!response.ok) {
     throw new Error(data?.error ?? `Request failed (${response.status}).`)
   }
-  return data as TurnResponse
+  return data as T
 }
+
+const post = <T>(path: string, payload: unknown, signal?: AbortSignal) =>
+  call<T>(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal })
+
+export const requestStart = (payload: StartRequest) => post<StartResponse>("/api/game/start", payload)
+
+export const requestTurn = (payload: TurnRequest, signal?: AbortSignal) =>
+  post<TurnResponse>("/api/game/turn", payload, signal)
+
+export const requestFinish = (payload: FinishRequest) => post<FinishResponse>("/api/game/finish", payload)
+
+export const requestStats = () => call<ScoreStats>("/api/game/stats", { cache: "no-store" })

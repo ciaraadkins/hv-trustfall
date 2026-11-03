@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { EMPTY_SESSION_STATS } from "@/lib/game/scoring"
+import { EMPTY_STATS } from "@/lib/game/scoring"
+import type { PlayerContext } from "@/lib/game/prompts"
 import type { TurnRequest } from "@/lib/game/schemas"
 
 const { generateStructured } = vi.hoisted(() => ({ generateStructured: vi.fn() }))
@@ -9,14 +10,24 @@ vi.mock("@/lib/server/providers", () => ({
   GameError: class extends Error {},
 }))
 
-import { takeAiTurn } from "@/lib/server/game"
+import { takeAiTurn as takeTurn } from "@/lib/server/game"
+
+const opponent = { model: "claude" as const, apiModel: "claude-sonnet-5-5" }
+const player: PlayerContext = {
+  stats: EMPTY_STATS,
+  recentRounds: [],
+  memory: {
+    profile: null,
+    notes: [{ noteId: 1, addedAt: "2026-10-30T00:00:00Z", humanDecision: "SHARE", aiDecision: "KEEP", note: "Bluffs early, then shares." }],
+  },
+}
+const takeAiTurn = (req: TurnRequest) => takeTurn(req, opponent, player)
 
 let round = 0
 const request = (overrides: Partial<TurnRequest> = {}): TurnRequest => ({
-  model: "claude",
+  roundToken: "token",
   roundId: `round-${++round}`,
   messages: [{ sender: "SYSTEM", content: "welcome", timestamp: 0 }, { sender: "YOU", content: "hi", timestamp: 1 }],
-  sessionStats: EMPTY_SESSION_STATS,
   now: 2,
   trigger: "human_message",
   humanLockedIn: false,
@@ -134,7 +145,9 @@ describe("takeAiTurn", () => {
     modelReturns({ message: "ok" })
     await takeAiTurn(request())
     expect(generateStructured).toHaveBeenCalledTimes(1)
-    expect(generateStructured.mock.calls[0][1].system).toContain("outwit the humans and win")
+    expect(generateStructured.mock.calls[0][0]).toEqual(opponent)
+    expect(generateStructured.mock.calls[0][1].system).toContain("win the world's remaining freshwater for AI")
+    expect(generateStructured.mock.calls[0][1].system).toContain("Bluffs early, then shares.")
   })
 
   it("sends the game update as the final user turn", async () => {

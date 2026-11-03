@@ -14,6 +14,7 @@ const config: Config = {
       },
       fontFamily: {
         mono: ["var(--font-space-mono)", "monospace"],
+        display: ["var(--font-display)", "Impact", "sans-serif"],
       },
       keyframes: {
         "pulse-subtle": {

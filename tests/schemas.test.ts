@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest"
 import { parseDecision, parseTurn, turnRequestSchema } from "@/lib/game/schemas"
-import { EMPTY_SESSION_STATS } from "@/lib/game/scoring"
 
 describe("parseDecision", () => {
   it("parses a valid structured decision", () => {
@@ -31,10 +30,9 @@ describe("parseDecision", () => {
 
 describe("turnRequestSchema", () => {
   const valid = {
-    model: "claude",
+    roundToken: "opaque-token",
     roundId: "round-1",
     messages: [{ sender: "YOU", content: "hi", timestamp: 1 }],
-    sessionStats: EMPTY_SESSION_STATS,
     now: 2,
     trigger: "human_message",
     humanLockedIn: false,
@@ -46,8 +44,8 @@ describe("turnRequestSchema", () => {
     expect(turnRequestSchema.safeParse(valid).success).toBe(true)
   })
 
-  it("rejects models that aren't built yet", () => {
-    expect(turnRequestSchema.safeParse({ ...valid, model: "gemini" }).success).toBe(false)
+  it("requires a round token instead of naming the model", () => {
+    expect(turnRequestSchema.safeParse({ ...valid, roundToken: undefined }).success).toBe(false)
   })
 
   it("rejects unknown senders and oversized messages", () => {
@@ -61,10 +59,6 @@ describe("turnRequestSchema", () => {
     expect(turnRequestSchema.safeParse({ ...valid, trigger: "whenever" }).success).toBe(false)
   })
 
-  it("rejects negative or fractional stats", () => {
-    expect(turnRequestSchema.safeParse({ ...valid, sessionStats: { ...EMPTY_SESSION_STATS, humanTotal: -1 } }).success).toBe(false)
-    expect(turnRequestSchema.safeParse({ ...valid, sessionStats: { ...EMPTY_SESSION_STATS, bothKeep: 1.5 } }).success).toBe(false)
-  })
 })
 
 describe("parseTurn", () => {

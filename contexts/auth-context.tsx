@@ -81,19 +81,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     run("LOGIN", async () => {
       const { auth, signInWithEmailAndPassword } = await loadFirebaseAuth()
       await signInWithEmailAndPassword(auth, email, password)
-    }, "/select")
+    }, "/game")
 
   const signUp = (email: string, password: string) =>
     run("SIGNUP", async () => {
       const { auth, createUserWithEmailAndPassword } = await loadFirebaseAuth()
       await createUserWithEmailAndPassword(auth, email, password)
-    }, "/select")
+    }, "/game")
 
   const signInWithGoogle = () =>
     run("GOOGLE LOGIN", async () => {
       const { auth, signInWithPopup, GoogleAuthProvider } = await loadFirebaseAuth()
       await signInWithPopup(auth, new GoogleAuthProvider())
-    }, "/select")
+    }, "/game")
 
   const signOut = () =>
     run("LOGOUT", async () => {

@@ -1,4 +1,4 @@
-import type { Choice, RoundResult, SessionStats } from "@/types/game"
+import type { Choice, Outcome, RoundResult, ScoreStats } from "@/types/game"
 
 /** Points for each outcome, indexed by human choice then AI choice. */
 export const PAYOFFS: Record<Choice, Record<Choice, { human: number; ai: number }>> = {
@@ -31,7 +31,7 @@ export function describePayoffs(): string {
   ].join("\n")
 }
 
-export const EMPTY_SESSION_STATS: SessionStats = {
+export const EMPTY_STATS: ScoreStats = {
   humanTotal: 0,
   aiTotal: 0,
   gamesPlayed: 0,
@@ -41,17 +41,23 @@ export const EMPTY_SESSION_STATS: SessionStats = {
   bothKeep: 0,
 }
 
-export function computeSessionStats(history: RoundResult[]): SessionStats {
-  return history.reduce<SessionStats>(
-    (stats, r) => ({
-      humanTotal: stats.humanTotal + r.yourPoints,
-      aiTotal: stats.aiTotal + r.aiPoints,
+export function outcomeOf(human: Choice, ai: Choice): Outcome {
+  if (human === "SHARE") return ai === "SHARE" ? "both_share" : "human_share_ai_keep"
+  return ai === "SHARE" ? "human_keep_ai_share" : "both_keep"
+}
+
+export function computeStats(rounds: Pick<RoundResult, "yourDecision" | "aiDecision">[]): ScoreStats {
+  return rounds.reduce<ScoreStats>((stats, r) => {
+    const outcome = outcomeOf(r.yourDecision, r.aiDecision)
+    const points = PAYOFFS[r.yourDecision][r.aiDecision]
+    return {
+      humanTotal: stats.humanTotal + points.human,
+      aiTotal: stats.aiTotal + points.ai,
       gamesPlayed: stats.gamesPlayed + 1,
-      bothShare: stats.bothShare + (r.yourDecision === "SHARE" && r.aiDecision === "SHARE" ? 1 : 0),
-      humanShareAiKeep: stats.humanShareAiKeep + (r.yourDecision === "SHARE" && r.aiDecision === "KEEP" ? 1 : 0),
-      humanKeepAiShare: stats.humanKeepAiShare + (r.yourDecision === "KEEP" && r.aiDecision === "SHARE" ? 1 : 0),
-      bothKeep: stats.bothKeep + (r.yourDecision === "KEEP" && r.aiDecision === "KEEP" ? 1 : 0),
-    }),
-    EMPTY_SESSION_STATS,
-  )
+      bothShare: stats.bothShare + (outcome === "both_share" ? 1 : 0),
+      humanShareAiKeep: stats.humanShareAiKeep + (outcome === "human_share_ai_keep" ? 1 : 0),
+      humanKeepAiShare: stats.humanKeepAiShare + (outcome === "human_keep_ai_share" ? 1 : 0),
+      bothKeep: stats.bothKeep + (outcome === "both_keep" ? 1 : 0),
+    }
+  }, EMPTY_STATS)
 }

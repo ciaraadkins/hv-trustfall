@@ -1,21 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createGameEngine } from "@/lib/game/engine"
-import type { TurnRequest, TurnResponse } from "@/lib/game/schemas"
+import { EMPTY_STATS } from "@/lib/game/scoring"
+import type { FinishRequest, TurnRequest, TurnResponse } from "@/lib/game/schemas"
 
 type Call = { payload: TurnRequest; resolve: (r: TurnResponse) => void; reject: (e: Error) => void; signal: AbortSignal }
 
-function setup() {
+async function setup() {
   const calls: Call[] = []
+  const finishes: FinishRequest[] = []
   const engine = createGameEngine({
     // Midpoint of every random range, and no pace jitter.
     random: () => 0.5,
+    requestStart: async ({ roundId }) => ({ roundToken: `token-${roundId}` }),
+    requestFinish: async (payload) => {
+      finishes.push(payload)
+      return { model: "deepseek", apiModel: "deepseek-flash", stats: { ...EMPTY_STATS, aiTotal: 5, gamesPlayed: 1 } }
+    },
     requestTurn: (payload, signal) =>
       new Promise((resolve, reject) => {
         calls.push({ payload, resolve, reject, signal })
       }),
   })
-  engine.startRound("claude", "r1")
-  return { engine, calls }
+  await engine.startRound("r1")
+  return { engine, calls, finishes }
 }
 
 const reply = (message: string | null, extra: Partial<TurnResponse> = {}): TurnResponse => ({
@@ -37,7 +44,7 @@ describe("game engine", () => {
   afterEach(() => vi.useRealTimers())
 
   it("asks the AI once after a burst of human messages", async () => {
-    const { engine, calls } = setup()
+    const { engine, calls } = await setup()
     engine.sendMessage("one")
     await advance(1000)
     engine.sendMessage("two")
@@ -50,7 +57,7 @@ describe("game engine", () => {
   })
 
   it("shows typing only for the last stretch, then delivers", async () => {
-    const { engine, calls } = setup()
+    const { engine, calls } = await setup()
     engine.sendMessage("hi")
     await advance(2000)
     calls[0].resolve(reply("hello there"))
@@ -65,7 +72,7 @@ describe("game engine", () => {
   })
 
   it("drops the AI's reply if you send while it's still reading", async () => {
-    const { engine, calls } = setup()
+    const { engine, calls } = await setup()
     engine.sendMessage("hi")
     await advance(2000)
     calls[0].resolve(reply("stale reply", { pace: "soon" }))
@@ -79,7 +86,7 @@ describe("game engine", () => {
   })
 
   it("delivers a crossed message that was already being typed", async () => {
-    const { engine, calls } = setup()
+    const { engine, calls } = await setup()
     engine.sendMessage("hi")
     await advance(2000)
     calls[0].resolve(reply("typing this"))
@@ -95,14 +102,14 @@ describe("game engine", () => {
   })
 
   it("lets the AI open the chat after a quiet spell", async () => {
-    const { calls } = setup()
+    const { calls } = await setup()
     await advance(27500) // midpoint of 15–40s
     expect(calls).toHaveLength(1)
     expect(calls[0].payload.trigger).toBe("human_quiet")
   })
 
   it("stops quiet checks after 3 silent ones in a row", async () => {
-    const { calls } = setup()
+    const { calls } = await setup()
     for (let i = 0; i < 3; i++) {
       await advance(27500)
       calls[i].resolve(reply(null))
@@ -112,7 +119,7 @@ describe("game engine", () => {
   })
 
   it("follows up when asked, up to 3 messages in a row", async () => {
-    const { engine, calls } = setup()
+    const { engine, calls } = await setup()
     engine.sendMessage("hi")
     await advance(2000)
     for (let i = 0; i < 3; i++) {
@@ -126,7 +133,7 @@ describe("game engine", () => {
   })
 
   it("skips a follow-up while you're typing", async () => {
-    const { engine, calls } = setup()
+    const { engine, calls } = await setup()
     engine.sendMessage("hi")
     await advance(2000)
     calls[0].resolve(reply("first", { followUp: true }))
@@ -137,7 +144,7 @@ describe("game engine", () => {
   })
 
   it("applies the AI's lock-in when its message appears, not before", async () => {
-    const { engine, calls } = setup()
+    const { engine, calls } = await setup()
     engine.sendMessage("hi")
     await advance(2000)
     calls[0].resolve(reply("sure", { lockIn: "KEEP" }))
@@ -148,7 +155,7 @@ describe("game engine", () => {
   })
 
   it("forces the AI to lock in when you're done talking, and closes the round", async () => {
-    const { engine, calls } = setup()
+    const { engine, calls, finishes } = await setup()
     engine.lockIn("SHARE")
     engine.doneTalking()
     await advance(0)
@@ -158,19 +165,28 @@ describe("game engine", () => {
     last.resolve(reply(null, { lockIn: "KEEP", pace: "later" }))
     await advance(15000) // "later" is capped to "soon" while you wait
     expect(engine.getState().phase).toBe("locked")
-    engine.reveal()
-    expect(engine.getState().lastResult).toMatchObject({ yourDecision: "SHARE", aiDecision: "KEEP" })
+    await engine.reveal()
+    expect(engine.getState().lastResult).toMatchObject({
+      model: "deepseek",
+      apiModel: "deepseek-flash",
+      yourDecision: "SHARE",
+      aiDecision: "KEEP",
+    })
+    // The whole round goes to the server to be logged.
+    expect(finishes).toHaveLength(1)
+    expect(finishes[0]).toMatchObject({ roundId: "r1", roundToken: "token-r1", humanDecision: "SHARE", aiDecision: "KEEP" })
+    expect(engine.getState().stats?.aiTotal).toBe(5)
   })
 
   it("shows an error, not a random move, when a required lock-in fails", async () => {
-    const { engine, calls } = setup()
+    const { engine, calls } = await setup()
     engine.lockIn("SHARE")
     engine.doneTalking()
     await advance(0)
-    calls.at(-1)!.reject(new Error("The ANTHROPIC_API_KEY was rejected."))
+    calls.at(-1)!.reject(new Error("Your opponent couldn't be reached."))
     await advance(0)
     expect(engine.getState().aiLockIn).toBeNull()
-    expect(engine.getState().error).toContain("rejected")
+    expect(engine.getState().error).toContain("couldn't be reached")
 
     engine.retryLockIn()
     await advance(0)
@@ -178,10 +194,10 @@ describe("game engine", () => {
   })
 
   it("treats a failed chat turn as silence", async () => {
-    const { engine, calls } = setup()
+    const { engine, calls } = await setup()
     engine.sendMessage("hi")
     await advance(2000)
-    calls[0].reject(new Error("Couldn't reach Claude."))
+    calls[0].reject(new Error("Your opponent didn't respond."))
     await advance(0)
     expect(engine.getState().error).toBeNull()
     expect(engine.getState().messages.filter((m) => m.sender === "AI")).toHaveLength(0)

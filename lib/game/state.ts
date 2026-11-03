@@ -1,20 +1,21 @@
-import { DEFAULT_MODEL } from "@/lib/models"
-import type { AIModel, Choice, Message, RoundResult } from "@/types/game"
+import type { AIModel, Choice, Message, RoundResult, ScoreStats } from "@/types/game"
 import { STRATEGIC_PROFILE_VERSION, welcomeMessage } from "./prompts"
 import { messagesLeft } from "./rules"
 import { scoreRound } from "./scoring"
 
 /**
- * idle     - no round yet (before mount)
+ * idle     - no round yet
+ * matching - the server is picking a hidden opponent
  * chatting - open chat; either side may message or lock in
  * locked   - both sides locked in; waiting for the player to view results
- * result   - round scored
+ * result   - round scored and the opponent revealed
  */
-type Phase = "idle" | "chatting" | "locked" | "result"
+type Phase = "idle" | "matching" | "chatting" | "locked" | "result"
 
 export type GameState = {
-  model: AIModel
   roundId: string
+  /** Names the opponent, encrypted; only the server can read it. Set once matched. */
+  roundToken: string | null
   phase: Phase
   messages: Message[]
   /** The AI's typing indicator is showing. */
@@ -26,25 +27,35 @@ export type GameState = {
   humanLockIn: Choice | null
   /** The human clicked I'M DONE TALKING. */
   humanDone: boolean
+  /** Waiting on the server to say who the opponent was. */
+  revealing: boolean
   lastResult: RoundResult | null
+  /** Rounds played since the page loaded. */
   history: RoundResult[]
+  /** The overall Humans vs AI score from the local round log; null until it loads. */
+  stats: ScoreStats | null
   error: string | null
 }
 
 export type GameAction =
-  | { type: "START_ROUND"; model: AIModel; roundId: string; now: number }
+  | { type: "MATCHING"; roundId: string }
+  | { type: "MATCH_FAILED"; roundId: string; error: string }
+  | { type: "START_ROUND"; roundId: string; roundToken: string; now: number }
   | { type: "HUMAN_MESSAGE"; roundId: string; message: Message }
   | { type: "AI_TYPING"; roundId: string; typing: boolean }
   | { type: "AI_TURN"; roundId: string; message: Message | null; lockIn: Choice | null; lockInReason: string | null }
   | { type: "HUMAN_LOCK_IN"; roundId: string; choice: Choice }
   | { type: "HUMAN_DONE"; roundId: string }
   | { type: "LOCK_IN_FAILED"; roundId: string; error: string }
-  | { type: "REVEAL"; roundId: string; date: string }
+  | { type: "REVEAL_STARTED"; roundId: string }
+  | { type: "REVEAL_FAILED"; roundId: string; error: string }
+  | { type: "REVEAL"; roundId: string; model: AIModel; apiModel: string; stats: ScoreStats; date: string }
+  | { type: "STATS_LOADED"; stats: ScoreStats }
   | { type: "DISMISS_ERROR" }
 
 export const initialGameState: GameState = {
-  model: DEFAULT_MODEL,
   roundId: "",
+  roundToken: null,
   phase: "idle",
   messages: [],
   aiTyping: false,
@@ -52,8 +63,10 @@ export const initialGameState: GameState = {
   aiLockInReason: null,
   humanLockIn: null,
   humanDone: false,
+  revealing: false,
   lastResult: null,
   history: [],
+  stats: null,
   error: null,
 }
 
@@ -69,22 +82,30 @@ function withLockPhase(state: GameState): GameState {
 }
 
 export function gameReducer(state: GameState, action: GameAction): GameState {
-  if (action.type === "START_ROUND") {
-    return {
-      ...initialGameState,
-      history: state.history,
-      model: action.model,
-      roundId: action.roundId,
-      phase: "chatting",
-      messages: [{ sender: "SYSTEM", content: welcomeMessage(), timestamp: action.now }],
-    }
+  if (action.type === "MATCHING") {
+    return { ...initialGameState, history: state.history, stats: state.stats, roundId: action.roundId, phase: "matching" }
   }
   if (action.type === "DISMISS_ERROR") return { ...state, error: null }
+  if (action.type === "STATS_LOADED") return { ...state, stats: action.stats }
 
   // Ignore anything from a round that has since been replaced.
   if (action.roundId !== state.roundId) return state
 
   switch (action.type) {
+    case "MATCH_FAILED":
+      if (state.phase !== "matching") return state
+      return { ...state, error: action.error }
+
+    case "START_ROUND":
+      if (state.phase !== "matching") return state
+      return {
+        ...state,
+        roundToken: action.roundToken,
+        phase: "chatting",
+        messages: [{ sender: "SYSTEM", content: welcomeMessage(), timestamp: action.now }],
+        error: null,
+      }
+
     case "HUMAN_MESSAGE":
       if (state.phase !== "chatting" || state.humanDone || messagesLeft(state.messages, "YOU") === 0) return state
       return { ...state, messages: [...state.messages, action.message], error: null }
@@ -117,10 +138,19 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       if (state.phase !== "chatting") return state
       return { ...state, aiTyping: false, error: action.error }
 
+    case "REVEAL_STARTED":
+      if (state.phase !== "locked" || state.revealing) return state
+      return { ...state, revealing: true, error: null }
+
+    case "REVEAL_FAILED":
+      if (!state.revealing) return state
+      return { ...state, revealing: false, error: action.error }
+
     case "REVEAL": {
       if (state.phase !== "locked" || !state.humanLockIn || !state.aiLockIn) return state
       const result: RoundResult = {
-        model: state.model,
+        model: action.model,
+        apiModel: action.apiModel,
         yourDecision: state.humanLockIn,
         aiDecision: state.aiLockIn,
         ...scoreRound(state.humanLockIn, state.aiLockIn),
@@ -128,7 +158,14 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         profileVersion: STRATEGIC_PROFILE_VERSION,
         date: action.date,
       }
-      return { ...state, phase: "result", lastResult: result, history: [...state.history, result] }
+      return {
+        ...state,
+        phase: "result",
+        revealing: false,
+        lastResult: result,
+        history: [...state.history, result],
+        stats: action.stats,
+      }
     }
   }
 }

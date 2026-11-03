@@ -1,11 +1,15 @@
 import "server-only"
 
 import { NextResponse } from "next/server"
-import { turnRequestSchema, type TurnRequest } from "@/lib/game/schemas"
+import type { z } from "zod"
 import { GameError } from "./providers"
 
-/** Validate a game request body, run the handler, and map errors to JSON responses. */
-export async function handleGameRequest<T>(request: Request, handler: (req: TurnRequest) => Promise<T>) {
+/** Validate a game request body against `schema`, run the handler, and map errors to JSON responses. */
+export async function handleGameRequest<S extends z.ZodTypeAny, T>(
+  request: Request,
+  schema: S,
+  handler: (req: z.infer<S>) => T | Promise<T>,
+) {
   let body: unknown
   try {
     body = await request.json()
@@ -13,7 +17,7 @@ export async function handleGameRequest<T>(request: Request, handler: (req: Turn
     return NextResponse.json({ error: "Request body must be JSON." }, { status: 400 })
   }
 
-  const parsed = turnRequestSchema.safeParse(body)
+  const parsed = schema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request.", issues: parsed.error.issues }, { status: 400 })
   }

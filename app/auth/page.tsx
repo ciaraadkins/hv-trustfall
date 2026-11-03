@@ -23,7 +23,7 @@ export default function AuthPage() {
   }
   
   const handleGuestPlay = () => {
-    router.push("/select")
+    router.push("/game")
   }
 
   if (!AUTH_ENABLED) {

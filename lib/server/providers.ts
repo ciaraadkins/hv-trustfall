@@ -3,7 +3,7 @@ import "server-only"
 import Anthropic from "@anthropic-ai/sdk"
 import OpenAI from "openai"
 import type { ReasoningEffort } from "openai/resources/shared"
-import { MODELS, resolveApiModel, type Provider } from "@/lib/models"
+import { MODELS, type ModelConfig } from "@/lib/models"
 import type { ChatTurn } from "@/lib/game/messages"
 import type { AIModel } from "@/types/game"
 
@@ -18,6 +18,9 @@ export class GameError extends Error {
   }
 }
 
+/** The model playing a round, pinned to the exact version it started with. */
+export type Opponent = { model: AIModel; apiModel: string }
+
 type CompletionRequest = {
   system: string
   turns: ChatTurn[]
@@ -28,19 +31,27 @@ type CompletionRequest = {
 
 export type StructuredFormat = { name: string; schema: Record<string, unknown> }
 
-const API_KEY_ENV: Record<Provider, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  openai: "OPENAI_API_KEY",
+/**
+ * A provider-side failure. The player only ever sees a generic message, so
+ * nothing names the model; the details go to the server log.
+ */
+class ProviderError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message)
+  }
 }
 
 let anthropicClient: Anthropic | null = null
 let openaiClient: OpenAI | null = null
+const compatibleClients = new Map<AIModel, OpenAI>()
 
-function requireKey(provider: Provider): void {
-  const envVar = API_KEY_ENV[provider]
-  if (!process.env[envVar]) {
-    throw new GameError(`${envVar} is not set on the server. Add it to .env.local and restart.`, 500)
-  }
+function requireKey(config: ModelConfig): string {
+  const key = process.env[config.apiKeyEnv]?.trim()
+  if (!key) throw new ProviderError(`${config.apiKeyEnv} is not set on the server`, false)
+  return key
 }
 
 /**
@@ -54,8 +65,8 @@ function claudeOptions(apiModel: string): { thinking?: Anthropic.ThinkingConfigP
   return { effort: "low", thinkingOn: true }
 }
 
-async function completeWithClaude(apiModel: string, req: CompletionRequest): Promise<string> {
-  requireKey("anthropic")
+async function completeWithClaude(config: ModelConfig, apiModel: string, req: CompletionRequest): Promise<string> {
+  requireKey(config)
   anthropicClient ??= new Anthropic()
 
   const options = claudeOptions(apiModel)
@@ -72,13 +83,10 @@ async function completeWithClaude(apiModel: string, req: CompletionRequest): Pro
     ...(options.thinking ? { thinking: options.thinking } : {}),
     ...(Object.keys(outputConfig).length ? { output_config: outputConfig } : {}),
   })
+  logUsage(apiModel, response.usage.input_tokens, response.usage.output_tokens)
 
-  if (response.stop_reason === "refusal") {
-    throw new GameError("Claude declined to respond. Try rephrasing your message.", 502)
-  }
-  if (req.format && response.stop_reason === "max_tokens") {
-    throw new GameError("Claude's response was cut off.", 502, true)
-  }
+  if (response.stop_reason === "refusal") throw new ProviderError("refused", false)
+  if (req.format && response.stop_reason === "max_tokens") throw new ProviderError("cut off at max_tokens", true)
 
   return response.content
     .flatMap((block) => (block.type === "text" ? [block.text] : []))
@@ -86,8 +94,8 @@ async function completeWithClaude(apiModel: string, req: CompletionRequest): Pro
     .trim()
 }
 
-async function completeWithOpenAI(apiModel: string, req: CompletionRequest): Promise<string> {
-  requireKey("openai")
+async function completeWithOpenAI(config: ModelConfig, apiModel: string, req: CompletionRequest): Promise<string> {
+  requireKey(config)
   openaiClient ??= new OpenAI()
 
   const effort = (process.env.OPENAI_REASONING_EFFORT?.trim() || "low") as ReasoningEffort
@@ -102,51 +110,122 @@ async function completeWithOpenAI(apiModel: string, req: CompletionRequest): Pro
       ? { text: { format: { type: "json_schema", name: req.format.name, schema: req.format.schema, strict: true } } }
       : {}),
   })
+  logUsage(apiModel, response.usage?.input_tokens, response.usage?.output_tokens)
 
   if (response.status === "incomplete") {
-    throw new GameError(
-      `ChatGPT's response was incomplete (${response.incomplete_details?.reason ?? "unknown reason"}).`,
-      502,
-      true,
-    )
+    throw new ProviderError(`incomplete (${response.incomplete_details?.reason ?? "unknown reason"})`, true)
   }
 
   return response.output_text.trim()
 }
 
-function toGameError(error: unknown, model: AIModel): GameError {
+/** Gemini, Grok, DeepSeek, and anything else with an OpenAI-style Chat Completions API. */
+async function completeWithCompatible(config: ModelConfig, apiModel: string, req: CompletionRequest): Promise<string> {
+  const apiKey = requireKey(config)
+  let client = compatibleClients.get(config.id)
+  if (!client) {
+    client = new OpenAI({ apiKey, baseURL: config.baseURL })
+    compatibleClients.set(config.id, client)
+  }
+
+  // Without strict schemas, describe the schema in the prompt; parsing and the retry catch the rest.
+  const looseJson = req.format && config.jsonMode === "json-object"
+  const system = looseJson
+    ? `${req.system}\n\nRespond with only a JSON object that matches this JSON schema:\n${JSON.stringify(req.format!.schema)}`
+    : req.system
+
+  // In JSON-object mode, a model that means to stay silent can send a blank reply instead of
+  // {"message": ""}, so the last turn ends with a reminder.
+  const turns = looseJson ? withJsonReminder(req.turns) : req.turns
+
+  const response = await client.chat.completions.create({
+    model: apiModel,
+    messages: [{ role: "system", content: system }, ...turns],
+    max_tokens: req.maxTokens,
+    ...(config.reasoningEffort ? { reasoning_effort: config.reasoningEffort } : {}),
+    ...(req.format
+      ? {
+          response_format: looseJson
+            ? { type: "json_object" as const }
+            : {
+                type: "json_schema" as const,
+                json_schema: { name: req.format.name, schema: req.format.schema, strict: true },
+              },
+        }
+      : {}),
+  })
+  logUsage(apiModel, response.usage?.prompt_tokens, response.usage?.completion_tokens)
+
+  const choice = response.choices[0]
+  if (choice?.finish_reason === "length") throw new ProviderError("cut off at max_tokens", true)
+  if (choice?.finish_reason === "content_filter") throw new ProviderError("refused", false)
+  const text = (choice?.message.content ?? "").trim()
+  if (!text) throw new ProviderError(`empty reply: ${JSON.stringify(choice).slice(0, 600)}`, true)
+  return text
+}
+
+const JSON_REMINDER =
+  'Reply with only the JSON object. Never send an empty reply: to stay silent, set "message" to "" in the JSON.'
+
+function withJsonReminder(turns: ChatTurn[]): ChatTurn[] {
+  const last = turns.at(-1)
+  if (!last || last.role !== "user") return [...turns, { role: "user", content: JSON_REMINDER }]
+  return [...turns.slice(0, -1), { ...last, content: `${last.content}\n\n${JSON_REMINDER}` }]
+}
+
+/** Token usage per call, so cost per round can be tracked from the start. */
+function logUsage(apiModel: string, input?: number, output?: number) {
+  console.info(`[usage] ${apiModel} in=${input ?? "?"} out=${output ?? "?"}`)
+}
+
+function toGameError(error: unknown, { model, apiModel }: Opponent): GameError {
   if (error instanceof GameError) return error
-  const { provider } = MODELS[model]
-  const name = provider === "anthropic" ? "Claude" : "ChatGPT"
+  const config = MODELS[model]
   const status =
     error instanceof Anthropic.APIError || error instanceof OpenAI.APIError ? (error.status ?? undefined) : undefined
 
+  // Log what actually went wrong; the player's message never names the model.
   if (status === 401 || status === 403) {
-    return new GameError(`The ${API_KEY_ENV[provider]} was rejected. Check the key and restart the server.`, 502)
+    console.error(`[${model}] ${config.apiKeyEnv} was rejected`)
+    return new GameError("Your opponent couldn't be reached. Try again later.", 502)
   }
   if (status === 404) {
-    return new GameError(`${name} model "${resolveApiModel(model)}" was not found. Check ${MODELS[model].envVar}.`, 502)
+    console.error(`[${model}] model "${apiModel}" was not found. Check ${config.envVar}.`)
+    return new GameError("Your opponent couldn't be reached. Try again later.", 502)
   }
   if (status === 429) {
-    return new GameError(`${name} is rate limited. Wait a moment and try again.`, 503, true)
+    console.error(`[${model}] rate limited`)
+    return new GameError("Your opponent is busy. Wait a moment and try again.", 503, true)
   }
-  console.error(`[${provider}] request failed`, error)
-  return new GameError(`Couldn't reach ${name}. Try again.`, 502, true)
+  if (error instanceof ProviderError) {
+    console.error(`[${model}] ${apiModel}: ${error.message}`)
+    return error.message === "refused"
+      ? new GameError("Your opponent declined to respond. Try rephrasing your message.", 502)
+      : new GameError("Your opponent didn't respond. Try again.", 502, error.retryable)
+  }
+  console.error(`[${model}] request failed`, error)
+  return new GameError("Your opponent didn't respond. Try again.", 502, true)
 }
 
-async function complete(model: AIModel, req: CompletionRequest): Promise<string> {
-  const { provider } = MODELS[model]
-  const apiModel = resolveApiModel(model)
+async function complete(opponent: Opponent, req: CompletionRequest): Promise<string> {
+  const config = MODELS[opponent.model]
   try {
-    return provider === "anthropic" ? await completeWithClaude(apiModel, req) : await completeWithOpenAI(apiModel, req)
+    switch (config.provider) {
+      case "anthropic":
+        return await completeWithClaude(config, opponent.apiModel, req)
+      case "openai":
+        return await completeWithOpenAI(config, opponent.apiModel, req)
+      case "openai-compatible":
+        return await completeWithCompatible(config, opponent.apiModel, req)
+    }
   } catch (error) {
-    throw toGameError(error, model)
+    throw toGameError(error, opponent)
   }
 }
 
 /** Get structured output, retrying once on a retryable or malformed response. */
 export async function generateStructured<T>(
-  model: AIModel,
+  opponent: Opponent,
   req: Omit<CompletionRequest, "format">,
   format: StructuredFormat,
   parse: (text: string) => T,
@@ -154,13 +233,13 @@ export async function generateStructured<T>(
   let lastError: unknown
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      return parse(await complete(model, { ...req, format }))
+      return parse(await complete(opponent, { ...req, format }))
     } catch (error) {
       if (error instanceof GameError && !error.retryable) throw error
       lastError = error
     }
   }
   if (lastError instanceof GameError) throw lastError
-  console.error(`[${model}] invalid ${format.name} output`, lastError)
-  throw new GameError(`${MODELS[model].displayName} didn't return a valid response. Try again.`, 502)
+  console.error(`[${opponent.model}] invalid ${format.name} output`, lastError)
+  throw new GameError("Your opponent didn't return a valid response. Try again.", 502)
 }

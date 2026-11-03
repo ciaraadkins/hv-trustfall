@@ -29,6 +29,7 @@ export default function MessageTimestamp({ timestamp }: MessageTimestampProps) {
     return () => clearInterval(interval)
   }, [timestamp])
 
-  return <span className="text-xs text-[#666] ml-2">{timeAgo}</span>
+  // Desktop only: on phones it just crowds the chat.
+  return <span className="hidden sm:inline text-xs text-[#666] ml-2">{timeAgo}</span>
 }
 

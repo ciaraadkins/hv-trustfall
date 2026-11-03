@@ -13,10 +13,11 @@ const GameRules = () => {
   const { aiName } = useGame()
 
   return (
-    <div className="bg-[#1e1e1e] border border-[#33FF33]/30 rounded-lg mb-4 overflow-hidden transition-all duration-300">
+    <div className="bg-[#1e1e1e] border border-[#33FF33]/30 rounded-lg mb-2 sm:mb-4 overflow-hidden transition-all duration-300">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full p-3 flex items-center justify-between text-left"
+        aria-expanded={isExpanded}
+        className="w-full px-3 py-2 sm:py-3 flex items-center justify-between text-left"
       >
         <div className="flex items-center gap-2">
           <HelpCircle className="w-5 h-5 text-[#33FF33]" />
@@ -30,9 +31,9 @@ const GameRules = () => {
       </button>
 
       {isExpanded && (
-        <div className="p-4 border-t border-[#33FF33]/30">
+        <div className="p-3 sm:p-4 border-t border-[#33FF33]/30 max-h-[50dvh] overflow-y-auto text-sm sm:text-base">
           <p className="font-mono text-[#ccc] mb-4">
-            In each round, both you and {aiName} choose to either SHARE or KEEP resources.
+            In each round, both you and the {aiName} choose to either SHARE or KEEP resources.
             Depending on what you both choose, you&apos;ll get different points:
           </p>
 
@@ -58,7 +59,7 @@ const GameRules = () => {
           </div>
 
           <p className="font-mono text-[#ccc] text-sm">
-            All points count toward this session&apos;s Humans vs. AI scoreboard.
+            All points count toward the all-time Humans vs. AI score.
           </p>
         </div>
       )}

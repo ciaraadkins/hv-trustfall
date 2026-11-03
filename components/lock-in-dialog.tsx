@@ -36,12 +36,19 @@ export default function LockInDialog({ open, onClose }: { open: boolean; onClose
     body = (
       <>
         <h2 className="text-2xl font-bold mb-2">BOTH PLAYERS HAVE LOCKED IN</h2>
-        <p className="text-[#ccc] mb-6">The chat is closed. Ready to see what {aiName} chose?</p>
+        <p className="text-[#ccc] mb-6">The chat is closed. Ready to see what the {aiName} chose, and who it was?</p>
+        {state.error && (
+          <div className="flex items-start gap-2 mb-4 text-left">
+            <AlertTriangle className="w-5 h-5 text-[#FF5555] shrink-0 mt-0.5" />
+            <p className="text-sm text-[#FF5555]">{state.error}</p>
+          </div>
+        )}
         <button
           onClick={reveal}
-          className="w-full bg-[#33FF33]/20 hover:bg-[#33FF33]/30 border border-[#33FF33] rounded px-6 py-3 text-[#33FF33] hover:glow-text"
+          disabled={state.revealing}
+          className="w-full bg-[#33FF33]/20 hover:bg-[#33FF33]/30 border border-[#33FF33] rounded px-6 py-3 text-[#33FF33] hover:glow-text disabled:opacity-50 disabled:cursor-wait"
         >
-          VIEW RESULTS
+          {state.revealing ? "REVEALING…" : state.error ? "TRY AGAIN" : "VIEW RESULTS"}
         </button>
       </>
     )
@@ -71,7 +78,7 @@ export default function LockInDialog({ open, onClose }: { open: boolean; onClose
       <>
         <h2 className="text-2xl font-bold mb-2">LOCK IN {pending}?</h2>
         <p className="text-[#ccc] mb-6">
-          This is final. {aiName} will know you&apos;ve locked in, but not what you chose.
+          This is final. The {aiName} will know you&apos;ve locked in, but not what you chose.
           {yourMessagesLeft > 0 && " You can keep chatting afterwards."}
         </p>
         <div className="grid grid-cols-2 gap-4">
@@ -104,7 +111,7 @@ export default function LockInDialog({ open, onClose }: { open: boolean; onClose
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
-      <div className="relative w-full max-w-md bg-[#1a1a1a] border border-[#33FF33]/50 rounded-lg p-8 text-center font-mono text-[#33FF33]">
+      <div className="relative w-full max-w-md bg-[#1a1a1a] border border-[#33FF33]/50 rounded-lg p-6 sm:p-8 text-center font-mono text-[#33FF33] [&_h2]:text-xl sm:[&_h2]:text-2xl">
         {closable && (
           <button onClick={onClose} aria-label="Close" className="absolute right-3 top-3 text-[#33FF33]/60 hover:text-[#33FF33]">
             <X className="w-5 h-5" />

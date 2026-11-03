@@ -42,18 +42,21 @@ export function capPace(pace: Pace, max: Pace): Pace {
 }
 
 /**
- * Split an AI response's delay into a silent "reading" phase and a visible
- * "typing" phase. `elapsedMs` is time already spent since the trigger.
+ * Split an AI response's remaining delay into a silent "reading" phase and a
+ * visible "typing" phase. `elapsedMs` is time already spent since the trigger.
+ *
+ * The pace's delay counts from the trigger, so the API's own response time is
+ * absorbed into it: a faster model doesn't reply sooner, which would give away
+ * which model it is. The typing phase still shows in full, within the 60 s cap.
  */
 export function planDelivery(
   { pace, messageLength, elapsedMs }: { pace: Pace; messageLength: number; elapsedMs: number },
   random: () => number = Math.random,
 ): { readingMs: number; typingMs: number } {
   const budget = Math.max(0, MAX_RESPONSE_MS - elapsedMs)
-  const totalMs = Math.min(randomBetween(PACE_RANGES_MS[pace], random), budget)
-  const typingMs =
-    messageLength > 0
-      ? Math.min(totalMs, Math.min(TYPING_MS[1], Math.max(TYPING_MS[0], messageLength * TYPING_MS_PER_CHAR)))
-      : 0
+  const typing =
+    messageLength > 0 ? Math.min(TYPING_MS[1], Math.max(TYPING_MS[0], messageLength * TYPING_MS_PER_CHAR)) : 0
+  const totalMs = Math.min(Math.max(randomBetween(PACE_RANGES_MS[pace], random) - elapsedMs, typing), budget)
+  const typingMs = Math.min(typing, totalMs)
   return { readingMs: totalMs - typingMs, typingMs }
 }

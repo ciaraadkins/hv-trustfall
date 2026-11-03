@@ -1,12 +1,23 @@
 import { describe, expect, it } from "vitest"
 import { STRATEGIC_PROFILE_VERSION } from "@/lib/game/prompts"
 import { gameReducer, humanFinished, initialGameState, type GameAction, type GameState } from "@/lib/game/state"
+import { EMPTY_STATS } from "@/lib/game/scoring"
 import type { Message } from "@/types/game"
 
-const start = (state: GameState = initialGameState, roundId = "r1"): GameState =>
-  gameReducer(state, { type: "START_ROUND", model: "claude", roundId, now: 0 })
-
 const run = (state: GameState, ...actions: GameAction[]) => actions.reduce(gameReducer, state)
+
+const start = (state: GameState = initialGameState, roundId = "r1"): GameState =>
+  run(state, { type: "MATCHING", roundId }, { type: "START_ROUND", roundId, roundToken: `token-${roundId}`, now: 0 })
+
+const reveal = (roundId = "r1"): GameAction => ({
+  type: "REVEAL",
+  roundId,
+  model: "grok",
+  apiModel: "grok-4.7",
+  stats: { ...EMPTY_STATS, humanTotal: 5, gamesPlayed: 1, humanKeepAiShare: 1 },
+  date: "d",
+})
+
 const you = (content = "hi"): Message => ({ sender: "YOU", content, timestamp: 1 })
 const ai = (content = "hey"): Message => ({ sender: "AI", content, timestamp: 1 })
 const humanMsg = (roundId = "r1"): GameAction => ({ type: "HUMAN_MESSAGE", roundId, message: you() })
@@ -67,10 +78,48 @@ describe("gameReducer", () => {
       start(),
       aiTurn(null, "SHARE"),
       { type: "HUMAN_LOCK_IN", roundId: "r1", choice: "KEEP" },
-      { type: "REVEAL", roundId: "r1", date: "d" },
+      reveal(),
     )
     expect(state.phase).toBe("result")
-    expect(state.lastResult).toMatchObject({ yourDecision: "KEEP", aiDecision: "SHARE", yourPoints: 5, aiPoints: 0 })
+    expect(state.lastResult).toMatchObject({
+      model: "grok",
+      apiModel: "grok-4.7",
+      yourDecision: "KEEP",
+      aiDecision: "SHARE",
+      yourPoints: 5,
+      aiPoints: 0,
+    })
+    expect(state.stats?.humanTotal).toBe(5)
+  })
+
+  it("keeps the overall score across rounds", () => {
+    const loaded = gameReducer(initialGameState, { type: "STATS_LOADED", stats: { ...EMPTY_STATS, aiTotal: 9 } })
+    expect(start(loaded).stats?.aiTotal).toBe(9)
+  })
+
+  it("waits for the opponent before opening the chat", () => {
+    const matching = gameReducer(initialGameState, { type: "MATCHING", roundId: "r1" })
+    expect(matching.phase).toBe("matching")
+    expect(matching.messages).toHaveLength(0)
+    expect(gameReducer(matching, humanMsg())).toBe(matching)
+
+    const failed = gameReducer(matching, { type: "MATCH_FAILED", roundId: "r1", error: "No opponents" })
+    expect(failed).toMatchObject({ phase: "matching", error: "No opponents" })
+
+    // A token for an older round doesn't open this one.
+    expect(gameReducer(matching, { type: "START_ROUND", roundId: "r0", roundToken: "t", now: 0 })).toBe(matching)
+    expect(start()).toMatchObject({ phase: "chatting", roundToken: "token-r1", error: null })
+  })
+
+  it("keeps the round locked if the reveal fails, so it can be retried", () => {
+    const locked = run(start(), aiTurn(null, "SHARE"), { type: "HUMAN_LOCK_IN", roundId: "r1", choice: "SHARE" })
+    const revealing = gameReducer(locked, { type: "REVEAL_STARTED", roundId: "r1" })
+    expect(revealing.revealing).toBe(true)
+    expect(gameReducer(revealing, { type: "REVEAL_STARTED", roundId: "r1" })).toBe(revealing)
+
+    const failed = gameReducer(revealing, { type: "REVEAL_FAILED", roundId: "r1", error: "Network error." })
+    expect(failed).toMatchObject({ phase: "locked", revealing: false, error: "Network error." })
+    expect(gameReducer(failed, reveal()).phase).toBe("result")
   })
 
   it("keeps the AI's first lock-in reason and puts it on the result", () => {
@@ -79,7 +128,7 @@ describe("gameReducer", () => {
       aiTurn(null, "KEEP", "They dodged every question."),
       aiTurn(null, "SHARE", "changed my mind"),
       { type: "HUMAN_LOCK_IN", roundId: "r1", choice: "SHARE" },
-      { type: "REVEAL", roundId: "r1", date: "d" },
+      reveal(),
     )
     expect(state.lastResult?.aiReasoning).toBe("They dodged every question.")
     expect(state.history[0].aiReasoning).toBe("They dodged every question.")
@@ -87,7 +136,7 @@ describe("gameReducer", () => {
   })
 
   it("doesn't reveal until both have locked in", () => {
-    const state = run(start(), { type: "HUMAN_LOCK_IN", roundId: "r1", choice: "SHARE" }, { type: "REVEAL", roundId: "r1", date: "d" })
+    const state = run(start(), { type: "HUMAN_LOCK_IN", roundId: "r1", choice: "SHARE" }, reveal())
     expect(state.phase).toBe("chatting")
     expect(state.lastResult).toBeNull()
   })
@@ -111,7 +160,7 @@ describe("gameReducer", () => {
       start(),
       aiTurn(null, "SHARE"),
       { type: "HUMAN_LOCK_IN", roundId: "r1", choice: "SHARE" },
-      { type: "REVEAL", roundId: "r1", date: "d" },
+      reveal(),
     )
     const next = start(played, "r2")
     expect(next.history).toHaveLength(1)

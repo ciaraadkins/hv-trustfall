@@ -2,20 +2,20 @@
 
 import type React from "react"
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react"
-import { DEFAULT_MODEL, MODELS, isAIModel } from "@/lib/models"
-import { requestTurn } from "@/lib/game/api-client"
+import { OPPONENT_NAME } from "@/lib/models"
+import { requestFinish, requestStart, requestStats, requestTurn } from "@/lib/game/api-client"
 import { createGameEngine, type GameEngine } from "@/lib/game/engine"
 import { messagesLeft } from "@/lib/game/rules"
-import { computeSessionStats } from "@/lib/game/scoring"
+import { EMPTY_STATS } from "@/lib/game/scoring"
 import { humanFinished, initialGameState, type GameState } from "@/lib/game/state"
-import type { AIModel, Choice, SessionStats } from "@/types/game"
-
-const MODEL_STORAGE_KEY = "selectedModel"
+import type { Choice, ScoreStats } from "@/types/game"
 
 interface GameContextType {
   state: GameState
+  /** What the opponent is called until the reveal. */
   aiName: string
-  sessionStats: SessionStats
+  /** The overall Humans vs AI score, from the local round log. Zero until it loads. */
+  stats: ScoreStats
   yourMessagesLeft: number
   aiMessagesLeft: number
   /** You've locked in and have nothing left to do but wait for the AI. */
@@ -26,10 +26,8 @@ interface GameContextType {
   doneTalking: () => void
   retryLockIn: () => void
   reveal: () => void
-  /** Start a fresh round, optionally against a different model. */
-  startRound: (model?: AIModel) => void
-  /** Switch opponent; resets the round only if the model changes. */
-  selectModel: (model: AIModel) => void
+  /** Start a fresh round against a new hidden opponent. */
+  startRound: () => void
   dismissError: () => void
 }
 
@@ -48,49 +46,24 @@ function newRoundId(): string {
 }
 
 export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [engine] = useState<GameEngine>(() => createGameEngine({ requestTurn }))
+  const [engine] = useState<GameEngine>(() => createGameEngine({ requestStart, requestFinish, requestTurn }))
   // The provider lives in the root layout for the whole session, so the engine is never torn down.
   const state = useSyncExternalStore(engine.subscribe, engine.getState, () => initialGameState)
 
-  const sessionStats = useMemo(() => computeSessionStats(state.history), [state.history])
-
-  const startRound = useCallback(
-    (model?: AIModel) => {
-      const nextModel = model ?? engine.getState().model
-      try {
-        localStorage.setItem(MODEL_STORAGE_KEY, nextModel)
-      } catch {
-        // Storage may be unavailable (private mode); the choice just won't persist.
-      }
-      engine.startRound(nextModel, newRoundId())
-    },
-    [engine],
-  )
-
-  const selectModel = useCallback(
-    (model: AIModel) => {
-      const current = engine.getState()
-      if (current.phase === "idle" || model !== current.model) startRound(model)
-    },
-    [engine, startRound],
-  )
-
-  // Restore the saved opponent and start the first round after mount.
+  // Load the overall score once; each finished round brings back the updated one.
   useEffect(() => {
-    let saved: string | null = null
-    try {
-      saved = localStorage.getItem(MODEL_STORAGE_KEY)
-    } catch {
-      // ignore
-    }
-    if (engine.getState().phase === "idle") startRound(isAIModel(saved) ? saved : DEFAULT_MODEL)
-  }, [engine, startRound])
+    requestStats().then(engine.setStats, (error: Error) => console.error("Couldn't load the score", error))
+  }, [engine])
+
+  const startRound = useCallback(() => {
+    void engine.startRound(newRoundId())
+  }, [engine])
 
   const value = useMemo<GameContextType>(
     () => ({
       state,
-      aiName: MODELS[state.model].displayName,
-      sessionStats,
+      aiName: OPPONENT_NAME,
+      stats: state.stats ?? EMPTY_STATS,
       yourMessagesLeft: messagesLeft(state.messages, "YOU"),
       aiMessagesLeft: messagesLeft(state.messages, "AI"),
       waitingOnAi: state.phase === "chatting" && !state.aiLockIn && humanFinished(state),
@@ -99,12 +72,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       lockIn: engine.lockIn,
       doneTalking: engine.doneTalking,
       retryLockIn: engine.retryLockIn,
-      reveal: engine.reveal,
+      reveal: () => void engine.reveal(),
       startRound,
-      selectModel,
       dismissError: engine.dismissError,
     }),
-    [state, sessionStats, engine, startRound, selectModel],
+    [state, engine, startRound],
   )
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>

@@ -54,3 +54,14 @@ body {
   }
 }
 
+
+/* A page that fills exactly the screen under the navbar (the chat), so only its inner panes scroll. */
+body:has(> .fill-screen) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+body:has(> .fill-screen) > .fill-screen {
+  flex: 1;
+  min-height: 0;
+}

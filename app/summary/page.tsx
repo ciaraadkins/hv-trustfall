@@ -6,14 +6,16 @@ import ProtectedRoute from "@/components/protected-route"
 import Scoreboard from "@/components/scoreboard"
 import { useGame } from "@/contexts/game-context"
 import { MODELS } from "@/lib/models"
+import { computeStats } from "@/lib/game/scoring"
 
 function rate(count: number, total: number): number {
   return total === 0 ? 0 : Math.round((count / total) * 100)
 }
 
 export default function SummaryPage() {
-  const { state, sessionStats } = useGame()
+  const { state } = useGame()
   const rounds = state.history
+  const sessionStats = computeStats(rounds)
   const played = rounds.length
 
   const yourRate = rate(rounds.filter((r) => r.yourDecision === "SHARE").length, played)
@@ -138,7 +140,7 @@ export default function SummaryPage() {
 
           <div className="flex flex-wrap gap-4 justify-center">
             <Link
-              href="/select"
+              href="/game"
               className="inline-flex items-center gap-2 bg-[#1e1e1e] border border-[#00FFFF]/50 hover:border-[#00FFFF] hover:bg-[#1e1e1e]/80 rounded px-6 py-3 font-mono text-[#00FFFF] transition-all duration-200 hover:glow-text"
             >
               <PlayCircle className="w-4 h-4" />
