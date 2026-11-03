@@ -156,17 +156,19 @@ export default function GamePage() {
   }, [phase, startRound])
 
   // This page stays mounted across rounds (the result screen renders here too), so reset per round.
-  useEffect(() => {
-    setDialogOpen(false)
-    setInputValue("")
-  }, [state.roundId])
-
   // Once you're only waiting on the AI, show its progress in the pop-up.
-  useEffect(() => {
-    if (waitingOnAi) setDialogOpen(true)
-  }, [waitingOnAi])
+  // (Adjusted while rendering, as React recommends, rather than in effects.)
+  const [seen, setSeen] = useState({ roundId: state.roundId, waitingOnAi })
+  if (seen.roundId !== state.roundId || seen.waitingOnAi !== waitingOnAi) {
+    setSeen({ roundId: state.roundId, waitingOnAi })
+    if (seen.roundId !== state.roundId) {
+      setDialogOpen(false)
+      setInputValue("")
+    }
+    if (waitingOnAi && !seen.waitingOnAi) setDialogOpen(true)
+  }
 
-  const closeDialog = useCallback(() => setDialogOpen(false), [])
+  const closeDialog = useCallback(() => setDialogOpen(false), [setDialogOpen])
 
   const handleSendMessage = () => {
     if (inputValue.trim() === "" || !canType) return

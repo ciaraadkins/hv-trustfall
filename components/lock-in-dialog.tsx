@@ -19,9 +19,12 @@ export default function LockInDialog({ open, onClose }: { open: boolean; onClose
   const { state, aiName, waitingOnAi, yourMessagesLeft, lockIn, retryLockIn, reveal } = useGame()
   const [pending, setPending] = useState<Choice | null>(null)
 
-  useEffect(() => {
+  // Closing the pop-up forgets a half-made choice.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (wasOpen !== open) {
+    setWasOpen(open)
     if (!open) setPending(null)
-  }, [open])
+  }
 
   // Close once you've locked in, unless there's still something to show.
   const bothLocked = state.phase === "locked"

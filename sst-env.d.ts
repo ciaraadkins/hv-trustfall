@@ -38,10 +38,6 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
-    "Site": {
-      "type": "sst.aws.Nextjs"
-      "url": string
-    }
     "XaiApiKey": {
       "type": "sst.sst.Secret"
       "value": string

@@ -1,4 +1,4 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreDependencies": ["eslint-config-next", "postcss-load-config"]
+  "ignoreDependencies": ["postcss-load-config"]
 }
