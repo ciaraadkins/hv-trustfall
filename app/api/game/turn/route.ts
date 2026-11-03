@@ -5,8 +5,8 @@ import { readRoundToken } from "@/lib/server/round-token"
 import { handleGameRequest } from "@/lib/server/route"
 
 export async function POST(request: Request) {
-  return handleGameRequest(request, turnRequestSchema, (req) => {
-    const { opponent, memory } = readRoundToken(req.roundToken, req.roundId)
-    return takeAiTurn(req, opponent, playerContext(memory))
+  return handleGameRequest(request, turnRequestSchema, async (req) => {
+    const { playerId, opponent, memory } = readRoundToken(req.roundToken, req.roundId)
+    return takeAiTurn(req, opponent, await playerContext(playerId, memory))
   })
 }

@@ -28,7 +28,7 @@ type PendingTurn = {
 }
 
 type EngineDeps = {
-  requestStart: (payload: StartRequest) => Promise<StartResponse>
+  requestStart: (payload: Omit<StartRequest, "playerId">) => Promise<StartResponse>
   requestFinish: (payload: FinishRequest) => Promise<FinishResponse>
   requestTurn: (payload: TurnRequest, signal: AbortSignal) => Promise<TurnResponse>
   random?: () => number

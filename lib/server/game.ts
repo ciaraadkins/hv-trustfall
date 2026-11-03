@@ -138,15 +138,19 @@ function writePlayerNote(opponent: Opponent, record: RoundRecord, memory: Memory
  * Failures are logged, never thrown: the round itself is already saved.
  */
 export async function rememberRound(opponent: Opponent, record: RoundRecord): Promise<void> {
+  const { playerId } = record
   try {
-    addNote(record, opponent, { note: await writePlayerNote(opponent, record, resolveMemory(memorySnapshot())) })
+    const memory = await resolveMemory(playerId, await memorySnapshot(playerId))
+    await addNote(record, opponent, { note: await writePlayerNote(opponent, record, memory) })
   } catch (error) {
     console.error(`[${opponent.model}] couldn't write a note on the player`, error)
-    addNote(record, opponent, { error: error instanceof Error ? error.message : String(error) })
+    await addNote(record, opponent, { error: error instanceof Error ? error.message : String(error) }).catch((logError) =>
+      console.error("Couldn't log the failed note", logError),
+    )
     return
   }
 
-  const pending = notesToConsolidate()
+  const pending = await notesToConsolidate(playerId)
   if (!pending) return
   try {
     const profile = await generateStructured(
@@ -159,7 +163,7 @@ export async function rememberRound(opponent: Opponent, record: RoundRecord): Pr
       { name: "profile", schema: PROFILE_JSON_SCHEMA },
       parseProfile,
     )
-    addProfile(pending.previous, pending.notes, opponent, profile)
+    await addProfile(playerId, pending.previous, pending.notes, opponent, profile)
   } catch (error) {
     // The notes stay pending, so the next round tries again.
     console.error(`[${opponent.model}] couldn't update the player profile`, error)

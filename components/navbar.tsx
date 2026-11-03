@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import Image from "next/image"
+import logo from "@/public/human-versus-logo-white.png"
 import { usePathname } from "next/navigation"
 import { Brain, LogOut, Table, User, type LucideIcon } from "lucide-react"
 import { AUTH_ENABLED, useAuth } from "@/contexts/auth-context"
@@ -25,7 +26,7 @@ const Navbar = () => {
       {/* Logo left, title centered (desktop only), the local-only tabs (desktop) and the score right. */}
       <div className="container mx-auto max-w-6xl grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <a href="https://humanversus.tech" className="justify-self-start" aria-label="Human Versus">
-          <Image src="/human-versus-logo-white.png" alt="Human Versus" width={75} height={30} priority />
+          <Image src={logo} alt="Human Versus" width={75} height={30} priority />
         </a>
 
         <Link href="/" className="hidden sm:block font-display text-xl tracking-wide text-[#33FF33]">

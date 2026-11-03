@@ -52,13 +52,13 @@ describe("pickOpponent", () => {
 
 describe("round token", () => {
   const opponent = { model: "grok" as const, apiModel: "grok-4.7" }
-  const setup = { opponent, memory: { profileVersion: 2, noteIds: [21, 22] } }
+  const setup = { playerId: "00000000-0000-4000-8000-000000000001", opponent, memory: { profileVersion: 2, noteIds: [21, 22] } }
 
   beforeEach(() => {
     process.env.ROUND_TOKEN_SECRET = "test-secret"
   })
 
-  it("round-trips the opponent and the AI's memory snapshot without exposing them", () => {
+  it("round-trips the player, the opponent, and the AI's memory snapshot without exposing them", () => {
     const token = issueRoundToken(setup, "r1")
     expect(token).not.toMatch(/grok/i)
     expect(readRoundToken(token, "r1")).toEqual(setup)

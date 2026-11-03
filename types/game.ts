@@ -41,11 +41,13 @@ export type ScoreStats = {
 export type Outcome = "both_share" | "human_share_ai_keep" | "human_keep_ai_share" | "both_keep"
 
 /**
- * One line of data/rounds.jsonl: everything about a finished round, kept
- * flat where possible so the file loads straight into a table for analysis.
+ * A row of the rounds table: everything about a finished round, kept flat
+ * where possible so it's easy to analyze.
  */
 export type RoundRecord = {
   roundId: string
+  /** The player's anonymous ID (later, tied to their account). */
+  playerId: string
   /** When the round finished (ISO 8601). */
   date: string
   /** When the welcome message appeared (ISO 8601). */
@@ -82,9 +84,10 @@ export type RoundRecord = {
  */
 export type MemorySnapshot = { profileVersion: number | null; noteIds: number[] }
 
-/** One line of data/memory/notes.jsonl: the AI's note on the player after a round. Never edited. */
+/** A row of the notes table: the AI's note on the player after a round. Never edited. */
 export type NoteRecord = {
-  /** 1, 2, 3, ... in the order written. */
+  playerId: string
+  /** 1, 2, 3, ... in the order written, per player. */
   noteId: number
   addedAt: string
   roundId: string
@@ -100,10 +103,11 @@ export type NoteRecord = {
 }
 
 /**
- * One line of data/memory/profile.jsonl: a version of the AI's consolidated
- * read on the player, rewritten from the previous version plus the newest notes.
+ * A row of the profiles table: a version of the AI's consolidated read on the
+ * player, rewritten from the previous version plus the newest notes.
  */
 export type ProfileRecord = {
+  playerId: string
   version: number
   createdAt: string
   provider: AIModel

@@ -6,16 +6,17 @@ import type { MemorySnapshot } from "@/types/game"
 import { GameError, type Opponent } from "./providers"
 
 /**
- * The round token tells the server which model is playing a round, and what
- * it remembers about the player, without the browser being able to read it:
+ * The round token tells the server which model is playing a round, for which
+ * player, and what it remembers about them, without the browser being able to
+ * read or change it:
  * AES-256-GCM, keyed by ROUND_TOKEN_SECRET. The server keeps no state for a
  * round in progress, so the token is the only record of both.
  */
 
-/** What the server needs to play a round. */
-export type RoundSetup = { opponent: Opponent; memory: MemorySnapshot }
+/** What the server needs to play a round: who's playing it, on both sides, and what the AI remembers. */
+export type RoundSetup = { playerId: string; opponent: Opponent; memory: MemorySnapshot }
 
-type RoundClaims = Opponent & { memory: MemorySnapshot; roundId: string; issuedAt: number }
+type RoundClaims = Opponent & { playerId: string; memory: MemorySnapshot; roundId: string; issuedAt: number }
 
 /** Long enough for any round, short enough that an old token can't be reused for long. */
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000
@@ -31,8 +32,8 @@ function key(): Buffer {
   return createHash("sha256").update(secret).digest()
 }
 
-export function issueRoundToken({ opponent, memory }: RoundSetup, roundId: string, now = Date.now()): string {
-  const claims: RoundClaims = { ...opponent, memory, roundId, issuedAt: now }
+export function issueRoundToken({ playerId, opponent, memory }: RoundSetup, roundId: string, now = Date.now()): string {
+  const claims: RoundClaims = { ...opponent, playerId, memory, roundId, issuedAt: now }
   const iv = randomBytes(IV_BYTES)
   const cipher = createCipheriv("aes-256-gcm", key(), iv)
   const body = Buffer.concat([cipher.update(JSON.stringify(claims), "utf8"), cipher.final()])
@@ -55,7 +56,11 @@ export function readRoundToken(token: string, roundId: string, now = Date.now())
     throw invalid
   }
 
-  if (!isAIModel(claims.model) || typeof claims.apiModel !== "string" || !claims.memory) throw invalid
+  if (!isAIModel(claims.model) || typeof claims.apiModel !== "string" || !claims.memory || !claims.playerId) throw invalid
   if (claims.roundId !== roundId || now - claims.issuedAt > TOKEN_TTL_MS) throw invalid
-  return { opponent: { model: claims.model, apiModel: claims.apiModel }, memory: claims.memory }
+  return {
+    playerId: claims.playerId,
+    opponent: { model: claims.model, apiModel: claims.apiModel },
+    memory: claims.memory,
+  }
 }

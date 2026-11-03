@@ -4,22 +4,25 @@ import OpenHashTarget from "@/components/open-hash-target"
 import { MODELS } from "@/lib/models"
 import { LOCAL_PAGES } from "@/lib/site"
 import { choiceColor, formatDateTime, shortId } from "@/lib/format"
-import { CONSOLIDATE_EVERY, memorySnapshot, readNoteLog, readProfiles } from "@/lib/server/memory"
+import { CONSOLIDATE_EVERY, memorySnapshot, playersWithMemory, readNoteLog, readProfiles } from "@/lib/server/memory"
 import type { ProfileRecord } from "@/types/game"
 
 export const dynamic = "force-dynamic"
 
 /**
- * The AI's memory of the player: the consolidated profile (with every earlier
- * version), then every note, newest first.
+ * The AI's memory of one player (?player=<id>, or the most recently active):
+ * the consolidated profile (with every earlier version), then every note, newest first.
  */
-export default function MemoryPage() {
+export default async function MemoryPage({ searchParams }: { searchParams: Promise<{ player?: string }> }) {
   if (!LOCAL_PAGES) notFound()
-  const notes = readNoteLog()
-  const profiles = readProfiles()
+  const players = await playersWithMemory()
+  const playerId = (await searchParams).player ?? players[0]
+  const [notes, profiles, snapshot] = playerId
+    ? await Promise.all([readNoteLog(playerId), readProfiles(playerId), memorySnapshot(playerId)])
+    : [[], [], { profileVersion: null, noteIds: [] }]
   const current = profiles.at(-1)
-  // What the AI would read if a round started now.
-  const inContext = new Set(memorySnapshot().noteIds)
+  // What the AI would read if this player started a round now.
+  const inContext = new Set(snapshot.noteIds)
 
   return (
     <main className="min-h-screen bg-[#121212] text-[#33FF33] relative">
@@ -30,10 +33,25 @@ export default function MemoryPage() {
       <div className="container mx-auto max-w-4xl px-4 py-12 z-10 relative font-mono">
         <h1 className="text-3xl font-bold mb-2">MEMORY</h1>
         <p className="text-sm text-[#ccc] mb-8">
-          After each round, the AI that played writes a note on how you played. Every {CONSOLIDATE_EVERY} notes, they&apos;re
-          folded into the profile. Before each round, the AI reads the current profile plus the notes since. Saved in{" "}
-          <code>data/memory/</code>.
+          After each round, the AI that played writes a note on how the player played. Every {CONSOLIDATE_EVERY} notes,
+          they&apos;re folded into the profile. Before each round, the AI reads that player&apos;s current profile plus the
+          notes since. From the <code>notes</code> and <code>profiles</code> tables in your local Postgres.
         </p>
+
+        {players.length > 1 && (
+          <p className="text-xs text-[#ccc] mb-8">
+            PLAYERS:{" "}
+            {players.map((id) => (
+              <Link
+                key={id}
+                href={`/memory?player=${id}`}
+                className={`mr-3 hover:underline ${id === playerId ? "text-[#33FF33] font-bold" : "text-[#00FFFF]"}`}
+              >
+                {shortId(id)}
+              </Link>
+            ))}
+          </p>
+        )}
 
         <h2 className="text-xl font-bold mb-3">PROFILE</h2>
         {current ? (

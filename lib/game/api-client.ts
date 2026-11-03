@@ -1,3 +1,5 @@
+import { BASE_PATH } from "@/lib/site"
+import { playerId } from "@/lib/player-id"
 import type { ScoreStats } from "@/types/game"
 import type {
   FinishRequest,
@@ -11,7 +13,7 @@ import type {
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response
   try {
-    response = await fetch(path, init)
+    response = await fetch(`${BASE_PATH}${path}`, init)
   } catch (error) {
     if ((error as Error).name === "AbortError") throw error
     throw new Error("Network error. Check your connection and try again.")
@@ -27,7 +29,8 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 const post = <T>(path: string, payload: unknown, signal?: AbortSignal) =>
   call<T>(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal })
 
-export const requestStart = (payload: StartRequest) => post<StartResponse>("/api/game/start", payload)
+export const requestStart = (payload: Omit<StartRequest, "playerId">) =>
+  post<StartResponse>("/api/game/start", { ...payload, playerId: playerId() })
 
 export const requestTurn = (payload: TurnRequest, signal?: AbortSignal) =>
   post<TurnResponse>("/api/game/turn", payload, signal)

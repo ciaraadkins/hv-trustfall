@@ -1,26 +1,29 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
-import path from "node:path"
-import { overallStats, readRounds, recordRound, type FinishedRound } from "@/lib/server/store"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  opponentsFaced,
+  overallStats,
+  readRounds,
+  recentRounds,
+  recordRound,
+  touchPlayer,
+  type FinishedRound,
+} from "@/lib/server/store"
 import type { Choice } from "@/types/game"
+import { OTHER_PLAYER, PLAYER, setupTestDb } from "./db"
 
-let dir: string
+setupTestDb()
 
-beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), "trustfall-"))
-  process.env.TRUSTFALL_DATA_DIR = dir
+beforeEach(async () => {
   vi.spyOn(console, "error").mockImplementation(() => {})
-})
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true })
-  delete process.env.TRUSTFALL_DATA_DIR
+  await touchPlayer(PLAYER)
+  await touchPlayer(OTHER_PLAYER)
 })
 
 const START = Date.UTC(2026, 9, 30, 12, 0, 0)
 let n = 0
 const round = (humanDecision: Choice, aiDecision: Choice, overrides: Partial<FinishedRound> = {}): FinishedRound => ({
   roundId: `r${++n}`,
+  playerId: PLAYER,
   opponent: { model: "grok", apiModel: "grok-4.20-0309-non-reasoning" },
   messages: [
     { sender: "SYSTEM", content: "welcome", timestamp: START },
@@ -34,15 +37,16 @@ const round = (humanDecision: Choice, aiDecision: Choice, overrides: Partial<Fin
   ...overrides,
 })
 
-describe("round log", () => {
-  it("starts empty", () => {
-    expect(readRounds()).toEqual([])
-    expect(overallStats()).toMatchObject({ humanTotal: 0, aiTotal: 0, gamesPlayed: 0 })
+describe("rounds", () => {
+  it("starts empty", async () => {
+    expect(await readRounds()).toEqual([])
+    expect(await overallStats()).toMatchObject({ humanTotal: 0, aiTotal: 0, gamesPlayed: 0 })
   })
 
-  it("logs a round with the model, outcome, scores, and transcript", () => {
-    const { record } = recordRound(round("SHARE", "KEEP"), new Date(START + 60_000))
-    expect(record).toMatchObject({
+  it("logs a round with the player, model, outcome, scores, and transcript", async () => {
+    const { record } = await recordRound(round("SHARE", "KEEP"), new Date(START + 60_000))
+    const expected = {
+      playerId: PLAYER,
       date: "2026-10-30T12:01:00.000Z",
       startedAt: "2026-10-30T12:00:00.000Z",
       durationSeconds: 60,
@@ -60,33 +64,44 @@ describe("round log", () => {
       aiMessageCount: 1,
       aiLockInReason: "They seem honest.",
       memory: { profileVersion: null, noteIds: [] },
-    })
-    expect(record.transcript).toEqual([
-      { sender: "HUMAN", text: "I'll share", at: "2026-10-30T12:00:12.000Z", secondsIntoRound: 12 },
-      { sender: "AI", text: "me too", at: "2026-10-30T12:00:20.000Z", secondsIntoRound: 20 },
-    ])
-    // One JSON object per line.
-    expect(readFileSync(path.join(dir, "rounds.jsonl"), "utf8").trim().split("\n")).toHaveLength(1)
+      transcript: [
+        { sender: "HUMAN", text: "I'll share", at: "2026-10-30T12:00:12.000Z", secondsIntoRound: 12 },
+        { sender: "AI", text: "me too", at: "2026-10-30T12:00:20.000Z", secondsIntoRound: 20 },
+      ],
+    }
+    expect(record).toMatchObject(expected)
+    // And it reads back from the database the same.
+    expect(await readRounds()).toEqual([record])
   })
 
-  it("records the overall score at the time each round was played", () => {
-    recordRound(round("SHARE", "SHARE"))
-    const { record } = recordRound(round("KEEP", "SHARE"))
+  it("keeps one overall score across every player", async () => {
+    await recordRound(round("SHARE", "SHARE"))
+    const { record } = await recordRound(round("KEEP", "SHARE", { playerId: OTHER_PLAYER }))
     expect(record.scoreBefore).toEqual({ humans: 3, ai: 3, rounds: 1 })
     expect(record.scoreAfter).toEqual({ humans: 8, ai: 3, rounds: 2 })
-    expect(overallStats()).toMatchObject({ humanTotal: 8, aiTotal: 3, gamesPlayed: 2, bothShare: 1, humanKeepAiShare: 1 })
+    expect(await overallStats()).toMatchObject({ humanTotal: 8, aiTotal: 3, gamesPlayed: 2, bothShare: 1, humanKeepAiShare: 1 })
   })
 
-  it("logs a retried round only once", () => {
+  it("keeps each player's history separate", async () => {
+    await recordRound(round("SHARE", "SHARE"))
+    await recordRound(round("KEEP", "KEEP", { playerId: OTHER_PLAYER, opponent: { model: "claude", apiModel: "x" } }))
+    await recordRound(round("KEEP", "SHARE"))
+    expect((await readRounds(PLAYER)).map((r) => r.humanDecision)).toEqual(["SHARE", "KEEP"])
+    expect((await recentRounds(PLAYER, 1)).map((r) => r.humanDecision)).toEqual(["KEEP"])
+    expect(await opponentsFaced(OTHER_PLAYER)).toEqual(["claude"])
+    expect(await readRounds()).toHaveLength(3)
+  })
+
+  it("logs a retried round only once", async () => {
     const first = round("KEEP", "KEEP")
-    expect(recordRound(first).created).toBe(true)
-    expect(recordRound(first).created).toBe(false)
-    expect(readRounds()).toHaveLength(1)
+    expect((await recordRound(first)).created).toBe(true)
+    expect((await recordRound(first)).created).toBe(false)
+    expect(await readRounds()).toHaveLength(1)
   })
 
-  it("skips a line it can't read instead of failing", () => {
-    recordRound(round("SHARE", "SHARE"))
-    appendFileSync(path.join(dir, "rounds.jsonl"), "{not json\n")
-    expect(readRounds()).toHaveLength(1)
+  it("gives concurrent rounds consecutive running scores", async () => {
+    await Promise.all([1, 2, 3, 4].map(() => recordRound(round("SHARE", "SHARE"))))
+    const rounds = await readRounds()
+    expect(rounds.map((r) => r.scoreAfter.rounds).sort()).toEqual([1, 2, 3, 4])
   })
 })

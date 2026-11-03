@@ -21,7 +21,11 @@ const messages = z
   )
   .max(20)
 
-export const startRequestSchema = z.object({ roundId })
+export const startRequestSchema = z.object({
+  roundId,
+  /** The browser's anonymous player ID (see lib/player-id.ts). */
+  playerId: z.string().uuid(),
+})
 
 export type StartRequest = z.infer<typeof startRequestSchema>
 export type StartResponse = { roundToken: string }

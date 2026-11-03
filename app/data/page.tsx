@@ -4,8 +4,8 @@ import { ChevronRight } from "lucide-react"
 import OpenHashTarget from "@/components/open-hash-target"
 import { MODELS, MODEL_IDS } from "@/lib/models"
 import { LOCAL_PAGES } from "@/lib/site"
-import { choiceColor, formatDateTime, formatDuration } from "@/lib/format"
-import { readNoteLog } from "@/lib/server/memory"
+import { choiceColor, formatDateTime, formatDuration, shortId } from "@/lib/format"
+import { readAllNotes } from "@/lib/server/memory"
 import { overallStats, readRounds } from "@/lib/server/store"
 import type { NoteRecord, RoundRecord } from "@/types/game"
 
@@ -14,11 +14,10 @@ export const dynamic = "force-dynamic"
 const COLUMNS = "grid grid-cols-[2.5rem_11rem_6.5rem_4.5rem_4.5rem_5.5rem_6.5rem_4.5rem_5rem_1rem] gap-x-3 items-center"
 
 /** Every logged round, newest first. Each row opens to show the transcript. */
-export default function DataPage() {
+export default async function DataPage() {
   if (!LOCAL_PAGES) notFound()
-  const rounds = readRounds()
-  const stats = overallStats(rounds)
-  const notesByRound = new Map(readNoteLog().map((note) => [note.roundId, note]))
+  const [rounds, stats, notes] = await Promise.all([readRounds(), overallStats(), readAllNotes()])
+  const notesByRound = new Map(notes.map((note) => [note.roundId, note]))
 
   return (
     <main className="min-h-screen bg-[#121212] text-[#33FF33] relative">
@@ -29,7 +28,8 @@ export default function DataPage() {
       <div className="container mx-auto max-w-6xl px-4 py-12 z-10 relative font-mono">
         <h1 className="text-3xl font-bold mb-2">DATA</h1>
         <p className="text-sm text-[#ccc] mb-6">
-          Every round, newest first. Click a round for the transcript. Saved in <code>data/rounds.jsonl</code>.
+          Every round by every player, newest first. Click a round for the transcript. From the <code>rounds</code> table in
+          your local Postgres.
         </p>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -100,6 +100,12 @@ export default function DataPage() {
                           ROUND <span className="text-[#33FF33]">{round.roundId}</span>
                         </span>
                         <span>
+                          PLAYER{" "}
+                          <Link href={`/memory?player=${round.playerId}`} className="text-[#00FFFF] hover:underline">
+                            {shortId(round.playerId)}
+                          </Link>
+                        </span>
+                        <span>
                           MODEL <span className="text-[#33FF33]">{round.apiModel}</span>
                         </span>
                         <span>STARTED {formatDateTime(round.startedAt)}</span>
@@ -162,7 +168,7 @@ function MemoryUsed({ round }: { round: RoundRecord }) {
       ) : (
         <span className="text-[#ccc]">
           {profileVersion !== null && (
-            <Link href={`/memory#profile-${profileVersion}`} className="text-[#00FFFF] hover:underline">
+            <Link href={`/memory?player=${round.playerId}#profile-${profileVersion}`} className="text-[#00FFFF] hover:underline">
               profile v{profileVersion}
             </Link>
           )}
@@ -171,7 +177,7 @@ function MemoryUsed({ round }: { round: RoundRecord }) {
           {noteIds.map((id, i) => (
             <span key={id}>
               {i > 0 && ", "}
-              <Link href={`/memory#note-${id}`} className="text-[#00FFFF] hover:underline">
+              <Link href={`/memory?player=${round.playerId}#note-${id}`} className="text-[#00FFFF] hover:underline">
                 #{id}
               </Link>
             </span>
@@ -193,7 +199,7 @@ function NoteAfter({ note }: { note: NoteRecord | undefined }) {
         <span className="text-[#FF5555]">couldn&apos;t be written ({note.error})</span>
       ) : (
         <>
-          <Link href={`/memory#note-${note.noteId}`} className="text-[#00FFFF] hover:underline">
+          <Link href={`/memory?player=${note.playerId}#note-${note.noteId}`} className="text-[#00FFFF] hover:underline">
             #{note.noteId}
           </Link>{" "}
           <span className="text-[#ccc]">{note.note}</span>

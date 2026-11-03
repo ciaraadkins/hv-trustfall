@@ -1,3 +1,6 @@
+/** Where the app lives on humanversus.tech. next.config.ts sets it as the basePath. */
+export const BASE_PATH = "/trustfall"
+
 /** Where questions about privacy and the terms go. */
 export const CONTACT_EMAIL = "ciara@humanversus.com"
 

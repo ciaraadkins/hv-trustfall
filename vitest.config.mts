@@ -11,5 +11,7 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.ts"],
+    // The store and memory tests share one local test database.
+    fileParallelism: false,
   },
 })

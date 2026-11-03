@@ -1,9 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
-import path from "node:path"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Opponent } from "@/lib/server/providers"
 import type { Choice, RoundRecord } from "@/types/game"
+import { OTHER_PLAYER, PLAYER, setupTestDb } from "./db"
 
 const { generateStructured } = vi.hoisted(() => ({ generateStructured: vi.fn() }))
 vi.mock("@/lib/server/providers", () => ({ generateStructured, GameError: class extends Error {} }))
@@ -15,52 +13,52 @@ import {
   memorySnapshot,
   notesToConsolidate,
   playerContext,
+  playersWithMemory,
   readNoteLog,
   readProfiles,
   resolveMemory,
 } from "@/lib/server/memory"
 import { rememberRound } from "@/lib/server/game"
-import { recordRound } from "@/lib/server/store"
+import { recordRound, touchPlayer } from "@/lib/server/store"
 
-let dir: string
+setupTestDb()
 
-beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), "trustfall-memory-"))
-  process.env.TRUSTFALL_DATA_DIR = dir
+beforeEach(async () => {
   generateStructured.mockReset()
   vi.spyOn(console, "error").mockImplementation(() => {})
-})
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true })
-  delete process.env.TRUSTFALL_DATA_DIR
+  await touchPlayer(PLAYER)
+  await touchPlayer(OTHER_PLAYER)
 })
 
 const grok: Opponent = { model: "grok", apiModel: "grok-4.20-0309-non-reasoning" }
 const claude: Opponent = { model: "claude", apiModel: "claude-sonnet-5-5" }
 
 let n = 0
-function playRound(humanDecision: Choice = "SHARE", aiDecision: Choice = "KEEP"): RoundRecord {
-  return recordRound({
+async function playRound(humanDecision: Choice = "SHARE", aiDecision: Choice = "KEEP", playerId = PLAYER): Promise<RoundRecord> {
+  const { record } = await recordRound({
     roundId: `round-${++n}`,
+    playerId,
     opponent: grok,
     messages: [{ sender: "SYSTEM", content: "welcome", timestamp: 0 }],
     humanDecision,
     aiDecision,
     aiLockInReason: null,
-    memory: memorySnapshot(),
-  }).record
+    memory: await memorySnapshot(playerId),
+  })
+  return record
 }
 
 /** Play `count` rounds, each with a note. */
-function notes(count: number) {
-  for (let i = 0; i < count; i++) addNote(playRound(), grok, { note: `Note ${i + 1}.` })
+async function notes(count: number, playerId = PLAYER) {
+  for (let i = 0; i < count; i++) await addNote(await playRound("SHARE", "KEEP", playerId), grok, { note: `Note ${i + 1}.` })
 }
 
-describe("notes log", () => {
-  it("numbers notes and records when, which round, who wrote them, and the outcome", () => {
-    const record = playRound("KEEP", "SHARE")
-    const note = addNote(record, grok, { note: " Said share, kept. " }, new Date("2026-10-30T17:42:13Z"))
+describe("notes", () => {
+  it("numbers each player's notes and records when, which round, who wrote them, and the outcome", async () => {
+    const record = await playRound("KEEP", "SHARE")
+    const note = await addNote(record, grok, { note: " Said share, kept. " }, new Date("2026-10-30T17:42:13Z"))
     expect(note).toEqual({
+      playerId: PLAYER,
       noteId: 1,
       addedAt: "2026-10-30T17:42:13.000Z",
       roundId: record.roundId,
@@ -71,66 +69,81 @@ describe("notes log", () => {
       status: "ok",
       note: "Said share, kept.",
     })
-    expect(addNote(playRound(), grok, { note: "Again." }).noteId).toBe(2)
-    expect(readNoteLog()).toHaveLength(2)
+    expect((await addNote(await playRound(), grok, { note: "Again." })).noteId).toBe(2)
+    expect((await addNote(await playRound("SHARE", "KEEP", OTHER_PLAYER), grok, { note: "Someone else." })).noteId).toBe(1)
+    expect(await readNoteLog(PLAYER)).toHaveLength(2)
+    expect(await playersWithMemory()).toEqual([OTHER_PLAYER, PLAYER])
   })
 
-  it("logs a note that couldn't be written, and leaves it out of the AI's memory", () => {
-    addNote(playRound(), grok, { error: "timed out" })
-    expect(readNoteLog()[0]).toMatchObject({ noteId: 1, status: "failed", note: null, error: "timed out" })
-    expect(memorySnapshot()).toEqual({ profileVersion: null, noteIds: [] })
+  it("logs a note that couldn't be written, and leaves it out of the AI's memory", async () => {
+    await addNote(await playRound(), grok, { error: "timed out" })
+    expect((await readNoteLog(PLAYER))[0]).toMatchObject({ noteId: 1, status: "failed", note: null, error: "timed out" })
+    expect(await memorySnapshot(PLAYER)).toEqual({ profileVersion: null, noteIds: [] })
   })
 })
 
 describe("memory snapshot", () => {
-  it("starts empty", () => {
-    expect(memorySnapshot()).toEqual({ profileVersion: null, noteIds: [] })
-    expect(resolveMemory(memorySnapshot())).toEqual({ profile: null, notes: [] })
+  it("starts empty", async () => {
+    expect(await memorySnapshot(PLAYER)).toEqual({ profileVersion: null, noteIds: [] })
+    expect(await resolveMemory(PLAYER, await memorySnapshot(PLAYER))).toEqual({ profile: null, notes: [] })
   })
 
-  it("is the latest profile plus the notes written since", () => {
-    notes(CONSOLIDATE_EVERY)
-    const pending = notesToConsolidate()!
-    addProfile(pending.previous, pending.notes, grok, "Shares when flattered.")
-    notes(2)
+  it("is the latest profile plus the notes written since", async () => {
+    await notes(CONSOLIDATE_EVERY)
+    const pending = (await notesToConsolidate(PLAYER))!
+    await addProfile(PLAYER, pending.previous, pending.notes, grok, "Shares when flattered.")
+    await notes(2)
 
-    const snapshot = memorySnapshot()
+    const snapshot = await memorySnapshot(PLAYER)
     expect(snapshot).toEqual({ profileVersion: 1, noteIds: [11, 12] })
-    expect(resolveMemory(snapshot)).toMatchObject({
+    expect(await resolveMemory(PLAYER, snapshot)).toMatchObject({
       profile: "Shares when flattered.",
       notes: [{ noteId: 11 }, { noteId: 12 }],
     })
   })
 
-  it("resolves an old snapshot to exactly what the AI saw then", () => {
-    notes(3)
-    const then = memorySnapshot()
-    notes(2)
-    expect(resolveMemory(then).notes.map((note) => note.noteId)).toEqual([1, 2, 3])
+  it("resolves an old snapshot to exactly what the AI saw then", async () => {
+    await notes(3)
+    const then = await memorySnapshot(PLAYER)
+    await notes(2)
+    expect((await resolveMemory(PLAYER, then)).notes.map((note) => note.noteId)).toEqual([1, 2, 3])
   })
 
-  it("is saved on each round, and drives the AI's player context", () => {
-    notes(2)
-    const record = playRound()
+  it("is each player's own", async () => {
+    await notes(2)
+    await notes(1, OTHER_PLAYER)
+    expect(await memorySnapshot(OTHER_PLAYER)).toEqual({ profileVersion: null, noteIds: [1] })
+    expect((await resolveMemory(OTHER_PLAYER, { profileVersion: null, noteIds: [1, 2] })).notes).toMatchObject([
+      { playerId: OTHER_PLAYER, note: "Note 1." },
+    ])
+  })
+
+  it("is saved on each round, and drives the AI's player context", async () => {
+    await notes(2)
+    await notes(1, OTHER_PLAYER)
+    const record = await playRound()
     expect(record.memory).toEqual({ profileVersion: null, noteIds: [1, 2] })
-    expect(playerContext(record.memory)).toMatchObject({
-      stats: { gamesPlayed: 3 },
+    expect(await playerContext(PLAYER, record.memory)).toMatchObject({
+      // The score is everyone's; the history and memory are this player's.
+      stats: { gamesPlayed: 4 },
+      recentRounds: [{}, {}, {}],
       memory: { profile: null, notes: [{ note: "Note 1." }, { note: "Note 2." }] },
     })
   })
 })
 
 describe("consolidation", () => {
-  it(`folds notes into a new profile version every ${CONSOLIDATE_EVERY} notes`, () => {
-    notes(CONSOLIDATE_EVERY - 1)
-    expect(notesToConsolidate()).toBeNull()
-    notes(1)
-    const first = notesToConsolidate()!
+  it(`folds a player's notes into a new profile version every ${CONSOLIDATE_EVERY} notes`, async () => {
+    await notes(CONSOLIDATE_EVERY - 1)
+    expect(await notesToConsolidate(PLAYER)).toBeNull()
+    await notes(1)
+    const first = (await notesToConsolidate(PLAYER))!
     expect(first.previous).toBeNull()
     expect(first.notes.map((note) => note.noteId)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 
-    const v1 = addProfile(first.previous, first.notes, claude, "v1 text", new Date("2026-11-01T00:00:00Z"))
+    const v1 = await addProfile(PLAYER, first.previous, first.notes, claude, "v1 text", new Date("2026-11-01T00:00:00Z"))
     expect(v1).toEqual({
+      playerId: PLAYER,
       version: 1,
       createdAt: "2026-11-01T00:00:00.000Z",
       provider: "claude",
@@ -139,33 +152,17 @@ describe("consolidation", () => {
       newNoteIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
       profile: "v1 text",
     })
-    expect(notesToConsolidate()).toBeNull()
+    expect(await notesToConsolidate(PLAYER)).toBeNull()
 
-    notes(CONSOLIDATE_EVERY)
-    const second = notesToConsolidate()!
+    await notes(CONSOLIDATE_EVERY)
+    const second = (await notesToConsolidate(PLAYER))!
     expect(second.previous?.version).toBe(1)
-    addProfile(second.previous, second.notes, grok, "v2 text")
-    expect(readProfiles().map((p) => [p.version, p.coversNotesThrough])).toEqual([
+    await addProfile(PLAYER, second.previous, second.notes, grok, "v2 text")
+    expect((await readProfiles(PLAYER)).map((p) => [p.version, p.coversNotesThrough])).toEqual([
       [1, 10],
       [2, 20],
     ])
-  })
-})
-
-describe("readable copy", () => {
-  it("regenerates data/ai-memory.md with the profile and every note", () => {
-    notes(CONSOLIDATE_EVERY)
-    const pending = notesToConsolidate()!
-    addProfile(pending.previous, pending.notes, claude, "The profile.")
-    addNote(playRound("KEEP", "KEEP"), grok, { error: "boom" })
-
-    const md = readFileSync(path.join(dir, "ai-memory.md"), "utf8")
-    expect(md).toContain("## Profile v1")
-    expect(md).toContain("covers notes #1-#10")
-    expect(md).toContain("The profile.")
-    expect(md).toContain("### #11 ·")
-    expect(md).toContain("(Couldn't be written: boom)")
-    expect(md).toContain("by GROK")
+    expect(await readProfiles(OTHER_PLAYER)).toEqual([])
   })
 })
 
@@ -175,36 +172,36 @@ describe("rememberRound", () => {
 
   it("writes the AI's note after a round", async () => {
     generateStructured.mockImplementation((_o, _r, format) => reply(format))
-    await rememberRound(grok, playRound())
-    expect(readNoteLog()).toMatchObject([{ noteId: 1, status: "ok", note: "They bluffed.", provider: "grok" }])
+    await rememberRound(grok, await playRound())
+    expect(await readNoteLog(PLAYER)).toMatchObject([{ noteId: 1, status: "ok", note: "They bluffed.", provider: "grok" }])
     expect(generateStructured).toHaveBeenCalledTimes(1)
   })
 
   it(`consolidates once the ${CONSOLIDATE_EVERY}th note is in`, async () => {
-    notes(CONSOLIDATE_EVERY - 1)
+    await notes(CONSOLIDATE_EVERY - 1)
     generateStructured.mockImplementation((_o, _r, format) => reply(format))
-    await rememberRound(claude, playRound())
+    await rememberRound(claude, await playRound())
 
     expect(generateStructured).toHaveBeenCalledTimes(2)
     expect(generateStructured.mock.calls[1][1].turns[0].content).toContain("#10")
-    expect(readProfiles()).toMatchObject([{ version: 1, provider: "claude", profile: "Consolidated profile." }])
+    expect(await readProfiles(PLAYER)).toMatchObject([{ version: 1, provider: "claude", profile: "Consolidated profile." }])
   })
 
   it("logs a failed note and skips consolidation", async () => {
-    notes(CONSOLIDATE_EVERY - 1)
+    await notes(CONSOLIDATE_EVERY - 1)
     generateStructured.mockRejectedValue(new Error("rate limited"))
-    await rememberRound(grok, playRound())
-    expect(readNoteLog().at(-1)).toMatchObject({ status: "failed", error: "rate limited" })
-    expect(readProfiles()).toEqual([])
+    await rememberRound(grok, await playRound())
+    expect((await readNoteLog(PLAYER)).at(-1)).toMatchObject({ status: "failed", error: "rate limited" })
+    expect(await readProfiles(PLAYER)).toEqual([])
   })
 
   it("keeps the notes pending if consolidation fails, so the next round retries", async () => {
-    notes(CONSOLIDATE_EVERY - 1)
+    await notes(CONSOLIDATE_EVERY - 1)
     generateStructured.mockImplementation((_o, _r, format) =>
       format.name === "note" ? Promise.resolve("ok") : Promise.reject(new Error("boom")),
     )
-    await rememberRound(grok, playRound())
-    expect(readProfiles()).toEqual([])
-    expect(notesToConsolidate()?.notes).toHaveLength(CONSOLIDATE_EVERY)
+    await rememberRound(grok, await playRound())
+    expect(await readProfiles(PLAYER)).toEqual([])
+    expect((await notesToConsolidate(PLAYER))?.notes).toHaveLength(CONSOLIDATE_EVERY)
   })
 })

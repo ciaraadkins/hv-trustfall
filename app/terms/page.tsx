@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import Link from "next/link"
 import LegalPage from "@/components/legal-page"
 import { CONTACT_EMAIL } from "@/lib/site"
 
@@ -34,8 +35,7 @@ export default function TermsPage() {
       <h2>What you write</h2>
       <p>
         You keep ownership of your messages. You let us store and analyze them, send them to the AI that plays you, and
-        publish short excerpts and statistics from them in research, as described in the <a href="/privacy">privacy
-        policy</a>. Anything published won&apos;t identify you.
+        publish short excerpts and statistics from them in research, as described in the <Link href="/privacy">privacy policy</Link>. Anything published won&apos;t identify you.
       </p>
 
       <h2>No guarantees</h2>

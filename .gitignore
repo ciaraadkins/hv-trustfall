@@ -39,3 +39,6 @@ next-env.d.ts
 
 # Human Versus brand kit (private: includes AWS account details)
 /human-versus-kit/
+
+# SST
+.sst/
