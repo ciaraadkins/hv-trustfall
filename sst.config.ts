@@ -16,7 +16,7 @@ export default $config({
   async run() {
     // The Router that owns humanversus.tech, created by Haystack's production stage
     // (its `routerId` output). Every Human Versus tool attaches to it at its own path.
-    const HUMAN_VERSUS_ROUTER_ID = "";
+    const HUMAN_VERSUS_ROUTER_ID = "E2H0IIBV2Y3FXI";
     const isProduction = $app.stage === "production";
 
     // ── Secrets (set with `npx sst secret set <Name> <value> --stage <stage>`, never in git) ──
